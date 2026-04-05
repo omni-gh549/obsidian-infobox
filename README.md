@@ -1,6 +1,6 @@
 # Obsidian Infobox
 
-An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter — a floating panel pinned to the top-right of the reading pane.
+An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter, including a floating panel pinned to the top-right of the reading pane.
 
 ## Features
 
