@@ -60,8 +60,8 @@ infobox:
 
 Each item in `fields` is a single-key YAML object:
 
-- **Regular row** — any key/value pair renders as a label + value row
-- **Section header** — use the key `section` to insert a divider with a category label
+- **Regular row**: any key/value pair renders as a label + value row
+- **Section header**: use the key `section` to insert a divider with a category label
 
 ```yaml
 fields:
@@ -82,4 +82,4 @@ Issues and pull requests are welcome.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT see [LICENSE](LICENSE)
