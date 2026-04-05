@@ -1,0 +1,178 @@
+/* ── Panel container ─────────────────────────────────────────── */
+/* Absolutely positioned within .view-content, pinned top-right  */
+.infobox-panel {
+    position: absolute;
+    top: 48px;
+    right: 36px;
+    width: 280px;
+    z-index: 10;
+    max-height: calc(100% - 16px);
+    overflow-y: auto;
+
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #1a1a1a;
+}
+
+.infobox-panel.infobox-theme-dark {
+    color: #e8e8e8;
+}
+
+/* Ensure the parent is a positioning context */
+.has-infobox {
+    position: relative !important;
+}
+
+/* Push text content left so it doesn't hide behind the panel */
+.has-infobox .markdown-preview-sizer,
+.has-infobox .cm-sizer {
+    padding-right: 300px !important;
+}
+
+/* Thin scrollbar for the panel */
+.infobox-panel::-webkit-scrollbar { width: 4px; }
+.infobox-panel::-webkit-scrollbar-thumb {
+    background: #ddd;
+    border-radius: 2px;
+}
+
+.infobox-panel.infobox-theme-dark::-webkit-scrollbar-thumb {
+    background: #4a4a4a;
+}
+
+/* ── Card ───────────────────────────────────────────────────── */
+.infobox {
+    background: #ffffff;
+    border: 1px solid #ededed;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.infobox.infobox-theme-dark {
+    background: #262626;
+    border-color: #3a3a3a;
+}
+
+/* ── Title ──────────────────────────────────────────────────── */
+.infobox-title {
+    text-align: center;
+    padding: 14px 16px 12px;
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #111;
+    letter-spacing: -0.01em;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-title {
+    color: #f2f2f2;
+    border-bottom-color: #3a3a3a;
+}
+
+/* ── Subtitle ───────────────────────────────────────────────── */
+.infobox-subtitle {
+    text-align: center;
+    padding: 6px 16px 10px;
+    font-style: italic;
+    color: #888;
+    font-size: 0.93em;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-subtitle {
+    color: #b0b0b0;
+    border-bottom-color: #3a3a3a;
+}
+
+/* ── Image ──────────────────────────────────────────────────── */
+.infobox-image {
+    text-align: center;
+    padding: 12px;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-image {
+    border-bottom-color: #3a3a3a;
+}
+
+.infobox-image img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    display: block;
+    margin: 0 auto;
+}
+
+/* ── Caption ────────────────────────────────────────────────── */
+.infobox-caption {
+    text-align: center;
+    padding: 4px 16px 10px;
+    font-size: 0.86em;
+    font-style: italic;
+    color: #aaa;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-caption {
+    color: #a0a0a0;
+    border-bottom-color: #3a3a3a;
+}
+
+/* ── Section headers ────────────────────────────────────────── */
+.infobox-section {
+    text-align: center;
+    padding: 7px 16px;
+    font-size: 0.72em;
+    font-weight: 600;
+    color: #999;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    background: #fafafa;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-section {
+    color: #b8b8b8;
+    background: #2e2e2e;
+    border-bottom-color: #3a3a3a;
+}
+
+/* ── Data rows ──────────────────────────────────────────────── */
+/* No vertical divider — label and value separated by space only */
+.infobox-row {
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-row {
+    border-bottom-color: #3a3a3a;
+}
+
+.infobox-row:last-child {
+    border-bottom: none;
+}
+
+.infobox-label {
+    flex: 0 0 auto;
+    font-weight: 600;
+    color: #999;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+.infobox.infobox-theme-dark .infobox-label {
+    color: #b0b0b0;
+}
+
+.infobox-value {
+    flex: 1 1 auto;
+    color: #1a1a1a;
+    text-align: right;
+}
+
+.infobox.infobox-theme-dark .infobox-value {
+    color: #ededed;
+}

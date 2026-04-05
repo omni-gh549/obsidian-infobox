@@ -1,0 +1,10 @@
+{
+	"id": "infobox",
+	"name": "Infobox",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Renders Wikipedia-style infoboxes from YAML frontmatter.",
+	"author": "Claude (Anthropic)",
+	"authorUrl": "https://anthropic.com",
+	"isDesktopOnly": false
+}
