@@ -1,7 +1,7 @@
 {
 	"id": "infobox",
 	"name": "Infobox",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.4.0",
 	"description": "Renders Wikipedia-style infoboxes from YAML frontmatter.",
 	"author": "Claude (Anthropic)",

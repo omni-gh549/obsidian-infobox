@@ -14,6 +14,7 @@ const { Plugin } = require('obsidian');
  *     subtitle: Theoretical Physicist
  *     image: einstein.jpg
  *     caption: Photograph from 1921
+ *     tags: [science, physics]
  *     fields:
  *       - section: Personal
  *       - Born: March 14, 1879
@@ -63,6 +64,54 @@ class InfoboxPlugin extends Plugin {
             : 'infobox-theme-light';
     }
 
+    normalizeTags(value) {
+        const tags = [];
+        const seen = new Set();
+
+        const addTag = raw => {
+            if (raw == null) return;
+
+            if (Array.isArray(raw)) {
+                raw.forEach(addTag);
+                return;
+            }
+
+            if (typeof raw === 'object') {
+                addTag(raw.tag ?? raw.name ?? '');
+                return;
+            }
+
+            const parts = String(raw)
+                .split(/[\s,]+/)
+                .map(tag => tag.trim().replace(/^#+/, '').replace(/,+$/, ''))
+                .filter(Boolean);
+
+            for (const tag of parts) {
+                const key = tag.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                tags.push(tag);
+            }
+        };
+
+        addTag(value);
+        return tags;
+    }
+
+    getTags(ib, fm, cache) {
+        if (ib.showTags === false) return [];
+        if (ib.tags != null) return this.normalizeTags(ib.tags);
+
+        const sources = [];
+
+        if (fm.tags != null) sources.push(fm.tags);
+        if (Array.isArray(cache?.tags)) {
+            sources.push(cache.tags.map(tagCache => tagCache.tag));
+        }
+
+        return this.normalizeTags(sources);
+    }
+
     processLeaf(leaf) {
         const view = leaf.view;
         if (!view || view.getViewType() !== 'markdown') return;
@@ -77,10 +126,12 @@ class InfoboxPlugin extends Plugin {
         const file = view.file;
         if (!file) return;
 
-        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache?.frontmatter;
         if (!fm?.infobox || typeof fm.infobox !== 'object') return;
 
         const ib = fm.infobox;
+        const tags = this.getTags(ib, fm, cache);
 
         // ── Build panel ──────────────────────────────────────────
         const panel = createDiv({ cls: 'infobox-panel' });
@@ -118,6 +169,24 @@ class InfoboxPlugin extends Plugin {
         // Caption
         if (ib.caption) {
             card.createDiv({ cls: 'infobox-caption', text: String(ib.caption) });
+        }
+
+        // Tags
+        if (tags.length > 0) {
+            const tagList = card.createDiv({ cls: 'infobox-tags' });
+            for (const tag of tags) {
+                const displayTag = `#${tag}`;
+                const tagEl = tagList.createEl('a', {
+                    cls: 'infobox-tag tag',
+                    text: displayTag,
+                    attr: { href: displayTag }
+                });
+                tagEl.setAttr('data-tag', tag);
+                tagEl.addEventListener('click', event => {
+                    event.preventDefault();
+                    this.app.workspace.openLinkText(displayTag, file.path);
+                });
+            }
         }
 
         // Fields (array of single-key objects)

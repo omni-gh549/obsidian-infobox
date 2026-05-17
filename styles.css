@@ -119,6 +119,50 @@
     border-bottom-color: #3a3a3a;
 }
 
+/* ── Tags ───────────────────────────────────────────────────── */
+.infobox-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #ededed;
+}
+
+.infobox.infobox-theme-dark .infobox-tags {
+    border-bottom-color: #3a3a3a;
+}
+
+.infobox-tag {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #f2f5f8;
+    color: #4f6f8f;
+    font-size: 0.82em;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.infobox-tag:hover {
+    background: #e5edf5;
+    color: #385a78;
+    text-decoration: none;
+}
+
+.infobox.infobox-theme-dark .infobox-tag {
+    background: #343f49;
+    color: #b9d4ee;
+}
+
+.infobox.infobox-theme-dark .infobox-tag:hover {
+    background: #3e4d5a;
+    color: #d6e8f8;
+}
+
 /* ── Section headers ────────────────────────────────────────── */
 .infobox-section {
     text-align: center;

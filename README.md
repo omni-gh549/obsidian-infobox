@@ -5,7 +5,7 @@ An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter,
 ## Features
 
 - Frontmatter-driven: no special syntax in note body required
-- Supports title, subtitle, image, caption, and key-value fields
+- Supports title, subtitle, image, caption, tags, and key-value fields
 - Named section dividers within the field list
 - Resolves local vault images (wikilink or plain filename)
 - Automatic light/dark theme support
@@ -19,7 +19,7 @@ An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter,
 2. Copy them into `.obsidian/plugins/infobox/` inside your vault
 3. Enable the plugin in **Settings → Community Plugins**
 
-### Community Plugins (coming soon)
+### Community Plugins
 
 Search for **Infobox** in the Obsidian community plugin browser.
 
@@ -34,6 +34,7 @@ infobox:
   subtitle: Theoretical Physicist
   image: einstein.jpg
   caption: Photograph from 1921
+  tags: [science, physics]
   fields:
     - section: Personal
     - Born: March 14, 1879
@@ -54,6 +55,8 @@ infobox:
 | `subtitle` | string | Italic line below the title |
 | `image` | string | Filename or URL. Supports `[[wikilinks]]` and `![[wikilinks]]` |
 | `caption` | string | Small italic text below the image |
+| `tags` | list/string | Optional tags to show in the infobox. Falls back to the note's frontmatter and inline tags |
+| `showTags` | boolean | Set to `false` to hide tags for a note |
 | `fields` | list | Array of single-key objects (see below) |
 
 ### Fields list
