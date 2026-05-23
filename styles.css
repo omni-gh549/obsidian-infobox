@@ -21,13 +21,13 @@
 
 /* Ensure the parent is a positioning context */
 .has-infobox {
-    position: relative !important;
+    position: relative;
 }
 
 /* Push text content left so it doesn't hide behind the panel */
 .has-infobox .markdown-preview-sizer,
 .has-infobox .cm-sizer {
-    padding-right: 300px !important;
+    padding-right: 300px;
 }
 
 /* Thin scrollbar for the panel */
