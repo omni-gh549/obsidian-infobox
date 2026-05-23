@@ -1,10 +1,10 @@
 {
 	"id": "omni-infobox",
 	"name": "Omni Infobox",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"minAppVersion": "1.4.0",
 	"description": "Renders Wikipedia-style infoboxes from YAML frontmatter.",
-	"author": "Claude (Anthropic)",
-	"authorUrl": "https://anthropic.com",
+	"author": "omni",
+	"authorUrl": "https://github.com/omni-gh549",
 	"isDesktopOnly": false
 }
