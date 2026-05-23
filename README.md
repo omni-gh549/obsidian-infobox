@@ -1,4 +1,4 @@
-# Obsidian Infobox
+# Omni Infobox
 
 An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter, including a floating panel pinned to the top-right of the reading pane.
 
@@ -16,7 +16,7 @@ An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter,
 ### Manual
 
 1. Download `main.js`, `styles.css`, and `manifest.json` from the [latest release](../../releases/latest)
-2. Copy them into `.obsidian/plugins/infobox/` inside your vault
+2. Copy them into `.obsidian/plugins/omni-infobox/` inside your vault
 3. Enable the plugin in **Settings → Community Plugins**
 
 ### Community Plugins
