@@ -119,8 +119,28 @@ class InfoboxPlugin extends Plugin {
         return pageName || target;
     }
 
+    normalizeInlineValue(value) {
+        if (value == null) return '';
+
+        if (Array.isArray(value)) {
+            if (
+                value.length === 1 &&
+                Array.isArray(value[0]) &&
+                value[0].length === 1 &&
+                value[0][0] != null &&
+                typeof value[0][0] !== 'object'
+            ) {
+                return `[[${String(value[0][0]).trim()}]]`;
+            }
+
+            return value.map(item => this.normalizeInlineValue(item)).join(', ');
+        }
+
+        return String(value);
+    }
+
     renderInlineText(parent, value, file) {
-        const text = String(value ?? '');
+        const text = this.normalizeInlineValue(value);
         const linkPattern = /!?\[\[([^\]]+)\]\]/g;
         let lastIndex = 0;
         let match;
