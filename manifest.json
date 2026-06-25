@@ -4,7 +4,7 @@
 	"version": "1.0.3",
 	"minAppVersion": "1.4.0",
 	"description": "Renders Wikipedia-style infoboxes from YAML frontmatter.",
-	"author": "omni",
+	"author": "omni-gh549",
 	"authorUrl": "https://github.com/omni-gh549",
 	"fundingUrl": "https://ko-fi.com/omni_",
 	"isDesktopOnly": false
