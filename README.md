@@ -7,6 +7,7 @@ An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter,
 - Frontmatter-driven: no special syntax in note body required
 - Supports title, subtitle, image, caption, tags, and key-value fields
 - Named section dividers within the field list
+- Supports internal wikilinks in text properties and fields
 - Resolves local vault images (wikilink or plain filename)
 - Automatic light/dark theme support
 - Works on desktop and mobile
@@ -33,13 +34,13 @@ infobox:
   title: Albert Einstein
   subtitle: Theoretical Physicist
   image: einstein.jpg
-  caption: Photograph from 1921
+  caption: Photograph from [[1921]]
   tags: [science, physics]
   fields:
     - section: Personal
     - Born: March 14, 1879
     - Died: April 18, 1955
-    - Nationality: German / American
+    - Nationality: [[Germany|German]] / [[United States|American]]
     - section: Career
     - Field: Theoretical physics
     - Known for: General relativity, Special relativity
@@ -58,6 +59,8 @@ infobox:
 | `tags` | list/string | Optional tags to show in the infobox. Falls back to the note's frontmatter and inline tags |
 | `showTags` | boolean | Set to `false` to hide tags for a note |
 | `fields` | list | Array of single-key objects (see below) |
+
+Text values in `title`, `subtitle`, `caption`, section headers, field labels, and field values can include internal links such as `[[Mondstadt]]` or `[[Knights of Favonius|the Knights]]`.
 
 ### Fields list
 

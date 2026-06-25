@@ -112,6 +112,64 @@ class InfoboxPlugin extends Plugin {
         return this.normalizeTags(sources);
     }
 
+    getLinkDisplayText(linkText) {
+        const target = String(linkText ?? '').trim();
+        const withoutSubpath = target.replace(/[#^].*$/, '');
+        const pageName = withoutSubpath.split('/').filter(Boolean).pop();
+        return pageName || target;
+    }
+
+    renderInlineText(parent, value, file) {
+        const text = String(value ?? '');
+        const linkPattern = /!?\[\[([^\]]+)\]\]/g;
+        let lastIndex = 0;
+        let match;
+
+        while ((match = linkPattern.exec(text)) !== null) {
+            if (match.index > lastIndex) {
+                parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+            }
+
+            const rawLink = match[1].trim();
+            const pipeIndex = rawLink.indexOf('|');
+            const target = (pipeIndex >= 0 ? rawLink.slice(0, pipeIndex) : rawLink).trim();
+            const display = (pipeIndex >= 0 ? rawLink.slice(pipeIndex + 1) : this.getLinkDisplayText(target)).trim();
+
+            if (target) {
+                const link = parent.createEl('a', {
+                    cls: 'internal-link infobox-link',
+                    text: display || target,
+                    attr: {
+                        href: target,
+                        'data-href': target
+                    }
+                });
+                link.addEventListener('click', event => {
+                    event.preventDefault();
+                    this.app.workspace.openLinkText(target, file.path);
+                });
+            } else {
+                parent.appendChild(document.createTextNode(match[0]));
+            }
+
+            lastIndex = linkPattern.lastIndex;
+        }
+
+        if (lastIndex < text.length) {
+            parent.appendChild(document.createTextNode(text.slice(lastIndex)));
+        }
+    }
+
+    createTextDiv(parent, cls, value, file) {
+        return this.createTextEl(parent, 'div', cls, value, file);
+    }
+
+    createTextEl(parent, tag, cls, value, file) {
+        const el = parent.createEl(tag, { cls });
+        this.renderInlineText(el, value, file);
+        return el;
+    }
+
     processLeaf(leaf) {
         const view = leaf.view;
         if (!view || view.getViewType() !== 'markdown') return;
@@ -142,12 +200,12 @@ class InfoboxPlugin extends Plugin {
 
         // Title
         if (ib.title) {
-            card.createDiv({ cls: 'infobox-title', text: String(ib.title) });
+            this.createTextDiv(card, 'infobox-title', ib.title, file);
         }
 
         // Subtitle
         if (ib.subtitle) {
-            card.createDiv({ cls: 'infobox-subtitle', text: String(ib.subtitle) });
+            this.createTextDiv(card, 'infobox-subtitle', ib.subtitle, file);
         }
 
         // Image
@@ -168,7 +226,7 @@ class InfoboxPlugin extends Plugin {
 
         // Caption
         if (ib.caption) {
-            card.createDiv({ cls: 'infobox-caption', text: String(ib.caption) });
+            this.createTextDiv(card, 'infobox-caption', ib.caption, file);
         }
 
         // Tags
@@ -198,11 +256,11 @@ class InfoboxPlugin extends Plugin {
                 const val = item[key];
 
                 if (key.toLowerCase() === 'section') {
-                    card.createDiv({ cls: 'infobox-section', text: String(val) });
+                    this.createTextDiv(card, 'infobox-section', val, file);
                 } else {
                     const row = card.createDiv({ cls: 'infobox-row' });
-                    row.createEl('span', { cls: 'infobox-label', text: key });
-                    row.createEl('span', { cls: 'infobox-value', text: String(val ?? '') });
+                    this.createTextEl(row, 'span', 'infobox-label', key, file);
+                    this.createTextEl(row, 'span', 'infobox-value', val ?? '', file);
                 }
             }
         }
