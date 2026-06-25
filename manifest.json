@@ -6,5 +6,6 @@
 	"description": "Renders Wikipedia-style infoboxes from YAML frontmatter.",
 	"author": "omni",
 	"authorUrl": "https://github.com/omni-gh549",
+	"fundingUrl": "https://ko-fi.com/omni_",
 	"isDesktopOnly": false
 }
