@@ -220,3 +220,13 @@
 .infobox.infobox-theme-dark .infobox-value {
     color: #ededed;
 }
+
+.infobox-link {
+    color: var(--link-color, #4f6f8f);
+    text-decoration: none;
+}
+
+.infobox-link:hover {
+    color: var(--link-color-hover, #385a78);
+    text-decoration: underline;
+}
