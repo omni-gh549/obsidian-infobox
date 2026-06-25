@@ -60,7 +60,7 @@ infobox:
 | `showTags` | boolean | Set to `false` to hide tags for a note |
 | `fields` | list | Array of single-key objects (see below) |
 
-Text values in `title`, `subtitle`, `caption`, section headers, field labels, and field values can include internal links such as `[[Mondstadt]]` or `[[Knights of Favonius|the Knights]]`.
+Text values in `title`, `subtitle`, `caption`, section headers, field labels, and field values can include internal links such as `[[Mondstadt]]` or `[[Knights of Favonius|the Knights]]`. Quoted and unquoted YAML wikilinks are supported.
 
 ### Fields list
 

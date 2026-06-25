@@ -1,7 +1,7 @@
 {
 	"id": "omni-infobox",
 	"name": "Omni Infobox",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"minAppVersion": "1.4.0",
 	"description": "Renders Wikipedia-style infoboxes from YAML frontmatter.",
 	"author": "omni-gh549",
