@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Validate release metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node -e "const fs=require('fs'); const manifest=JSON.parse(fs.readFileSync('manifest.json','utf8')); const versions=JSON.parse(fs.readFileSync('versions.json','utf8')); if (manifest.version !== process.env.RELEASE_TAG) throw new Error('manifest version does not match tag'); if (!versions[process.env.RELEASE_TAG]) throw new Error('versions.json is missing the release');"
+          test "$(node -p \"require('./manifest.json').id\")" = "infobox"
+          test "$(node -p \"require('./manifest.json').name\")" = "Infobox"
+
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            main.js
+            styles.css
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ github.ref_name }}"
+          main.js manifest.json styles.css
+          --repo "${{ github.repository }}"
+          --verify-tag
+          --generate-notes
