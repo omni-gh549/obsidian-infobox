@@ -230,3 +230,70 @@
     color: var(--link-color-hover, #385a78);
     text-decoration: underline;
 }
+
+/* ── Multiple image tabs ───────────────────────────────────── */
+
+.infobox-gallery {
+    width: 100%;
+}
+
+.infobox-image-tabs {
+    display: flex;
+    width: 100%;
+    border-bottom: 1px solid #ededed;
+    background: #fafafa;
+}
+
+.infobox.infobox-theme-dark .infobox-image-tabs {
+    background: #2e2e2e;
+    border-bottom-color: #3a3a3a;
+}
+
+.infobox-image-tab {
+    flex: 1;
+    margin: 0;
+    padding: 7px 8px;
+
+    border: none;
+    border-right: 1px solid #ededed;
+    border-radius: 0;
+
+    background: transparent;
+    color: #888;
+
+    font: inherit;
+    font-size: 0.9em;
+    font-weight: 600;
+
+    cursor: pointer;
+}
+
+.infobox-image-tab:last-child {
+    border-right: none;
+}
+
+.infobox-image-tab:hover {
+    background: #f0f0f0;
+    color: #333;
+}
+
+.infobox-image-tab.is-active {
+    background: #fff;
+    color: #111;
+    box-shadow: inset 0 -3px 0 var(--interactive-accent);
+}
+
+.infobox.infobox-theme-dark .infobox-image-tab {
+    color: #aaa;
+    border-right-color: #3a3a3a;
+}
+
+.infobox.infobox-theme-dark .infobox-image-tab:hover {
+    background: #383838;
+    color: #eee;
+}
+
+.infobox.infobox-theme-dark .infobox-image-tab.is-active {
+    background: #262626;
+    color: #fff;
+}

@@ -228,25 +228,117 @@ class InfoboxPlugin extends Plugin {
             this.createTextDiv(card, 'infobox-subtitle', ib.subtitle, file);
         }
 
-        // Image
-        if (ib.image) {
-            const wrap = card.createDiv({ cls: 'infobox-image' });
-            const img  = wrap.createEl('img');
-            // Strip ![[...]] or [[...]] wikilink syntax if present
-            let src = String(ib.image).trim();
-            src = src.replace(/^!?\[\[(.+?)(\|.*)?\]\]$/, '$1').trim();
-            if (src.startsWith('http')) {
-                img.src = src;
-            } else {
-                const resolved = this.app.metadataCache.getFirstLinkpathDest(src, file.path);
-                if (resolved) img.src = this.app.vault.getResourcePath(resolved);
-            }
-            img.alt = String(ib.caption || ib.title || '');
-        }
+        // Image / image gallery
+        const images = Array.isArray(ib.images) && ib.images.length > 0
+            ? ib.images
+            : ib.image
+                ? [{
+                    label: '',
+                    image: ib.image,
+                    caption: ib.caption || ''
+                }]
+                : [];
 
-        // Caption
-        if (ib.caption) {
-            this.createTextDiv(card, 'infobox-caption', ib.caption, file);
+        if (images.length > 0) {
+            const gallery = card.createDiv({ cls: 'infobox-gallery' });
+
+            let tabs = null;
+
+            if (images.length > 1) {
+                tabs = gallery.createDiv({ cls: 'infobox-image-tabs' });
+            }
+
+            const wrap = gallery.createDiv({ cls: 'infobox-image' });
+            const img = wrap.createEl('img');
+
+            const caption = gallery.createDiv({
+                cls: 'infobox-caption infobox-gallery-caption'
+            });
+
+            const resolveImage = imageValue => {
+                if (!imageValue) return '';
+
+                let src = String(imageValue).trim();
+
+                src = src
+                    .replace(/^!?\[\[(.+?)(\|.*)?\]\]$/, '$1')
+                    .trim();
+
+                if (src.startsWith('http')) {
+                    return src;
+                }
+
+                const resolved =
+                    this.app.metadataCache.getFirstLinkpathDest(
+                        src,
+                        file.path
+                    );
+
+                return resolved
+                    ? this.app.vault.getResourcePath(resolved)
+                    : '';
+            };
+
+            const showImage = (entry, index) => {
+                const src = resolveImage(entry.image);
+
+                if (src) {
+                    img.src = src;
+                } else {
+                    img.removeAttribute('src');
+                }
+
+                img.alt = String(
+                    entry.caption ||
+                    entry.label ||
+                    ib.title ||
+                    ''
+                );
+
+                caption.empty();
+
+                if (entry.caption) {
+                    this.renderInlineText(
+                        caption,
+                        entry.caption,
+                        file
+                    );
+
+                    caption.style.display = '';
+                } else {
+                    caption.style.display = 'none';
+                }
+
+                if (tabs) {
+                    const tabElements =
+                        tabs.querySelectorAll('.infobox-image-tab');
+
+                    tabElements.forEach((tab, tabIndex) => {
+                        tab.classList.toggle(
+                            'is-active',
+                            tabIndex === index
+                        );
+                    });
+                }
+            };
+
+            if (tabs) {
+                images.forEach((entry, index) => {
+                    const tab = tabs.createEl('button', {
+                        cls: 'infobox-image-tab',
+                        text: entry.label || `Image ${index + 1}`
+                    });
+
+                    tab.addEventListener('click', event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+
+                        showImage(entry, index);
+                    });
+                });
+            }
+
+            showImage(images[0], 0);
         }
 
         // Tags
