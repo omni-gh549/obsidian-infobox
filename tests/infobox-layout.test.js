@@ -77,6 +77,8 @@ class TestElement {
     }
 
     querySelector(selector) {
+        if (selector === '.markdown-preview-sizer') return this.previewSizer || null;
+        if (selector === '.cm-sizer') return this.sourceSizer || null;
         if (selector === '.markdown-preview-sizer, .cm-sizer') {
             return this.contentSizer || null;
         }
@@ -129,6 +131,25 @@ plugin.processLeaf({
 assert(container.classList.contains('has-infobox'), 'container should have has-infobox class');
 assert(cmSizer.children.some(child => child.cls === 'infobox-panel'), 'readable sizer should host the panel');
 assert(cmSizer.classList.contains('infobox-readable-host'));
+for (const mode of ['preview', 'source']) {
+    const modeContainer = new TestElement('div');
+    const readable = new TestElement('div', { cls: 'is-readable-line-width' });
+    const source = new TestElement('div', { cls: 'cm-sizer' });
+    const preview = new TestElement('div', { cls: 'markdown-preview-sizer' });
+    readable.appendChild(source);
+    readable.appendChild(preview);
+    modeContainer.contentSizer = source;
+    modeContainer.sourceSizer = source;
+    modeContainer.previewSizer = preview;
+    plugin.processLeaf({ view: {
+        containerEl: modeContainer, contentEl: modeContainer,
+        file: { path: 'Test.md' }, getViewType: () => 'markdown', getMode: () => mode
+    } });
+    const active = mode === 'preview' ? preview : source;
+    const hidden = mode === 'preview' ? source : preview;
+    assert(active.children.some(child => child.cls === 'infobox-panel'), `${mode} must host the infobox in its active sizer`);
+    assert.equal(hidden.children.length, 0, `${mode} must not use the hidden sizer`);
+}
 assert(!require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8').includes('padding-right: 300px'));
 
 console.log('infobox-layout tests passed');

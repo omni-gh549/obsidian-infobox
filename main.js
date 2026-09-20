@@ -1808,7 +1808,11 @@ class InfoboxPlugin extends Plugin {
             new InfoboxEditModal(this.app, file, JSON.parse(JSON.stringify(ib))).open();
         });
 
-        const contentSizer = ct.querySelector('.markdown-preview-sizer, .cm-sizer');
+        // Both sizers may exist; the inactive mode's DOM is hidden.
+        const mode = view.getMode?.();
+        const contentSizer = ct.querySelector(mode === 'preview'
+            ? '.markdown-preview-sizer'
+            : mode === 'source' ? '.cm-sizer' : '.markdown-preview-sizer, .cm-sizer');
         const readableContainer = contentSizer?.closest('.is-readable-line-width') ||
             ct.closest('.is-readable-line-width') ||
             view.contentEl?.closest('.is-readable-line-width');
