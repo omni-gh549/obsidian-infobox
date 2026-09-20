@@ -9,6 +9,37 @@ const MarkdownRenderer = obsidian.MarkdownRenderer;
 const Menu = obsidian.Menu || class Menu { };
 const Keymap = obsidian.Keymap;
 
+// Only offer a repair when quoting standalone wikilink values makes the entire
+// frontmatter valid. The original note is changed only by the repair button.
+function repairWikilinkFrontmatter(source) {
+    const match = source.match(/^(\uFEFF?---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/);
+    if (!match || typeof obsidian.parseYaml !== 'function') return null;
+    try { obsidian.parseYaml(match[2]); return null; } catch (_) { }
+    let blockIndent = null;
+    const repaired = match[2].split('\n').map(line => {
+        const indent = line.match(/^ */)[0].length;
+        if (blockIndent !== null) {
+            if (!line.trim() || indent > blockIndent) return line;
+            blockIndent = null;
+        }
+        if (/:\s*[|>][+-]?\d?\s*(?:#.*)?\r?$/.test(line)) {
+            blockIndent = indent;
+            return line;
+        }
+        const value = line.match(/^(\s*(?:-\s+)?[^:\r\n]+:\s*)(!?\[\[[^\r\n]*\]\][^\r\n]*)(\r?)$/);
+        if (!value) return line;
+        // Do not guess whether an unquoted hash is a YAML comment or note text.
+        if (/\s#/.test(value[2])) return line;
+        return value[1] + JSON.stringify(value[2]) + value[3];
+    }).join('\n');
+    if (repaired === match[2]) return null;
+    try {
+        const parsed = obsidian.parseYaml(repaired);
+        if (!parsed?.infobox || typeof parsed.infobox !== 'object') return null;
+    } catch (_) { return null; }
+    return match[1] + repaired + match[3] + source.slice(match[0].length);
+}
+
 /*
  * Infobox plugin — reads structured data from YAML frontmatter and renders
  * a Wikipedia-style panel pinned to the right side of the reading pane.
@@ -1140,6 +1171,7 @@ class ImageSuggestModal extends FuzzySuggestModal {
 
 class InfoboxPlugin extends Plugin {
     _pending = null;
+    _repairRequests = new WeakMap();
 
     async onload() {
         const r = () => this.scheduleRefresh();
@@ -1198,6 +1230,7 @@ class InfoboxPlugin extends Plugin {
     }
 
     onunload() {
+        this._repairRequests = new WeakMap();
         if (this._pending != null) cancelAnimationFrame(this._pending);
         document.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         document.querySelectorAll('.has-infobox').forEach(e => e.classList.remove('has-infobox'));
@@ -1448,6 +1481,8 @@ class InfoboxPlugin extends Plugin {
 
         const ct = view.containerEl;
         if (!ct) return;
+        const request = {};
+        this._repairRequests.set(ct, request);
 
         // Always clean up first
         ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
@@ -1459,7 +1494,14 @@ class InfoboxPlugin extends Plugin {
 
         const cache = this.app.metadataCache.getFileCache(file);
         const fm = cache?.frontmatter;
-        if (!fm?.infobox || typeof fm.infobox !== 'object') return;
+        if (!fm?.infobox || typeof fm.infobox !== 'object') {
+            if (!fm && this.app.vault?.cachedRead) {
+                this.showFrontmatterRepair(view, file, request).catch(error => {
+                    console.error('[Infobox] Could not inspect frontmatter', error);
+                });
+            }
+            return;
+        }
 
         const ib = fm.infobox;
         const tags = this.getTags(ib, fm, cache);
@@ -1778,6 +1820,29 @@ class InfoboxPlugin extends Plugin {
             ct.appendChild(panel);
         }
         ct.classList.add('has-infobox');
+    }
+    async showFrontmatterRepair(view, file, request) {
+        const source = await this.app.vault.cachedRead(file);
+        if (!repairWikilinkFrontmatter(source)) return;
+        const ct = view.containerEl;
+        if (view.file !== file || this._repairRequests.get(ct) !== request) return;
+        const panel = ct.createDiv({ cls: 'infobox-panel infobox-repair' });
+        ct.classList.add('has-infobox');
+        panel.createEl('p', {
+            text: 'This infobox contains unquoted wikilink values that are invalid YAML.'
+        });
+        const button = panel.createEl('button', { text: 'Add YAML quotes', attr: { type: 'button' } });
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await this.app.vault.process(file, latest => repairWikilinkFrontmatter(latest) || latest);
+                this.scheduleRefresh();
+            } catch (error) {
+                button.disabled = false;
+                console.error('[Infobox] Could not repair frontmatter', error);
+                new obsidian.Notice('Could not repair infobox YAML. Please quote the wikilink values manually.');
+            }
+        });
     }
 }
 

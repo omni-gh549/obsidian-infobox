@@ -93,7 +93,13 @@ infobox:
 | `showTags` | boolean | Set to `false` to hide tags for a note |
 | `fields` | list | Array of single-key objects (see below) |
 
-Text values in `title`, `subtitle`, `caption`, section headers, field labels, and field values can include internal links such as `[[Mondstadt]]` or `[[Knights of Favonius|the Knights]]`. Quoted and unquoted YAML wikilinks are supported.
+Text values in `title`, `subtitle`, `caption`, section headers, field labels, and field values can include internal links such as `[[Mondstadt]]` or `[[Knights of Favonius|the Knights]]`. Quote values that begin with a wikilink, especially when text follows it:
+
+```yaml
+  - Ancestors: "[[Marlow Sonners]] (maternal great-grandmother, deceased)"
+```
+
+An unquoted `[[link]]` is interpreted as a YAML array, and adding text after it makes the YAML invalid. For this specific error, the plugin offers **Add YAML quotes** in place of the infobox. This repairs the values only when the resulting frontmatter parses successfully; it preserves the note body. Other YAML errors must be corrected manually.
 
 ### Fields list
 
@@ -116,6 +122,22 @@ Field values containing multiple items are automatically rendered as a bulleted 
 - Comma-separated: `Known for: General relativity, Special relativity`
 
 Delimiters inside wikilinks (such as alias pipes or commas) are preserved and will not split the link.
+
+For titled groups of lists inside one field, use Markdown headings and bullets in a YAML block scalar. These can also be entered directly in the visual editor's value box:
+
+```yaml
+fields:
+  - Aliases: |
+      #### Codenames
+      - Black King
+      - Iron God
+
+      #### Nicknames
+      - Armored Avenger
+      - [[Golden Boy]]
+```
+
+Each heading becomes a compact divider within the value column, with its list underneath. Inside a block scalar, wikilinks do not need YAML quotes.
 
 ### Images
 

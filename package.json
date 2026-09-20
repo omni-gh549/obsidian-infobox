@@ -1,0 +1,6 @@
+{
+  "name": "omni-infobox-tests",
+  "private": true,
+  "scripts": { "test": "node --test tests/*.test.js" },
+  "devDependencies": { "js-yaml": "^4.1.0" }
+}

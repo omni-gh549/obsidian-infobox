@@ -303,6 +303,32 @@ button.infobox-image-tab.is-active {
     height: 16px;
 }
 
+.infobox-value :is(h1, h2, h3, h4, h5, h6) {
+    font-size: 1em;
+    line-height: 1.4;
+    margin: 10px 0 4px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--infobox-border-color);
+    text-align: left;
+}
+
+.infobox-value > :first-child {
+    margin-top: 0;
+}
+
+.infobox-value :is(ul, ol) {
+    text-align: left;
+    padding-inline-start: 1.4em;
+    margin: 4px 0 8px;
+}
+
+.infobox-repair {
+    padding: 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+}
+
 .infobox-edit-button:hover {
     background-color: var(--interactive-hover);
 }
