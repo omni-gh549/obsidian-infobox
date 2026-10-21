@@ -60,3 +60,26 @@ test('editor opens list fields and retains explicit list formatting', () => {
     const value = row.children.find(child => child.tag === 'textarea');
     assert.equal(value.value, '- Engineer\n- Founder');
 });
+
+test('multiple links in one field are saved as separate list items for the graph', async () => {
+    const frontmatter = {};
+    const editor = new Editor({}, {}, {
+        fields: [
+            { section: 'A, B' },
+            { Comma: '[[One]], [[Two]], [[Three]]' },
+            { Lines: '[[One]]\n[[Two]]\n[[Three]]' },
+            { Bullets: '- [[One]]\n- [[Two]]' },
+            { Single: '[[One]]' },
+            { Text: 'Paris, France' }
+        ]
+    });
+    editor.app = { fileManager: { processFrontMatter: async (_, cb) => cb(frontmatter) } };
+    await editor.saveFields();
+    const [, comma, lines, bullets, single, text] = frontmatter.infobox.fields;
+    assert.equal(JSON.stringify(comma.Comma), JSON.stringify(['[[One]]', '[[Two]]', '[[Three]]']));
+    assert.equal(JSON.stringify(lines.Lines), JSON.stringify(['[[One]]', '[[Two]]', '[[Three]]']));
+    assert.equal(JSON.stringify(bullets.Bullets), JSON.stringify(['[[One]]', '[[Two]]']));
+    assert.equal(single.Single, '[[One]]');
+    assert.equal(text.Text, 'Paris, France');
+    assert.equal(frontmatter.infobox.fields[0].section, 'A, B');
+});

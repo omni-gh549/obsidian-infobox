@@ -192,6 +192,17 @@ function extractListItems(value, normalizeFn) {
     return [str];
 }
 
+// Obsidian's graph and backlinks only see each link in a frontmatter value when
+// the links are separate list items, so store link-only multi-value strings as lists.
+function toGraphFriendlyValue(value) {
+    if (typeof value !== 'string') return value;
+    const isLink = s => /^!?\[\[[^\[\]]+\]\]$/.test(s);
+    const bullet = /^(?:[-+•*]|\d+[.)])\s+/;
+    const lines = value.split(/\r?\n/).map(s => s.trim().replace(bullet, '').trim()).filter(Boolean);
+    const items = lines.length > 1 ? lines : extractListItems(value);
+    return items.length > 1 && items.every(isLink) ? items : value;
+}
+
 function insertTextWithUndo(input, text, selectionAfterStart, selectionAfterEnd, replaceStart, replaceEnd) {
     if (replaceStart !== undefined && replaceEnd !== undefined) {
         input.setSelectionRange(replaceStart, replaceEnd);
@@ -280,7 +291,12 @@ class InfoboxEditModal extends Modal {
     async saveFields() {
         await this.app.fileManager.processFrontMatter(this.file, frontmatter => {
             if (!frontmatter.infobox) frontmatter.infobox = {};
-            frontmatter.infobox.fields = JSON.parse(JSON.stringify(this.currentData.fields || []));
+            frontmatter.infobox.fields = JSON.parse(JSON.stringify(this.currentData.fields || [])).map(field => {
+                if (!field || typeof field !== 'object' || Array.isArray(field)) return field;
+                const out = {};
+                for (const [k, v] of Object.entries(field)) out[k] = k === 'section' ? v : toGraphFriendlyValue(v);
+                return out;
+            });
         });
     }
 
@@ -1172,6 +1188,7 @@ class ImageSuggestModal extends FuzzySuggestModal {
 class InfoboxPlugin extends Plugin {
     _pending = null;
     _repairRequests = new WeakMap();
+    _panelObservers = new Map();
 
     async onload() {
         const r = () => this.scheduleRefresh();
@@ -1231,6 +1248,7 @@ class InfoboxPlugin extends Plugin {
 
     onunload() {
         this._repairRequests = new WeakMap();
+        for (const ct of [...this._panelObservers.keys()]) this.disconnectPanelObserver(ct);
         if (this._pending != null) cancelAnimationFrame(this._pending);
         document.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         document.querySelectorAll('.has-infobox').forEach(e => e.classList.remove('has-infobox'));
@@ -1485,6 +1503,7 @@ class InfoboxPlugin extends Plugin {
         this._repairRequests.set(ct, request);
 
         // Always clean up first
+        this.disconnectPanelObserver(ct);
         ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         ct.classList.remove('has-infobox');
         ct.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
@@ -1816,14 +1835,36 @@ class InfoboxPlugin extends Plugin {
         const readableContainer = contentSizer?.closest('.is-readable-line-width') ||
             ct.closest('.is-readable-line-width') ||
             view.contentEl?.closest('.is-readable-line-width');
+        let host = ct;
         if (contentSizer && readableContainer) {
             contentSizer.classList.add('infobox-readable-host');
             panel.classList.add('infobox-panel-readable');
-            contentSizer.appendChild(panel);
-        } else {
-            ct.appendChild(panel);
+            host = contentSizer;
         }
+        host.appendChild(panel);
         ct.classList.add('has-infobox');
+        this.keepPanelAttached(ct, host, panel);
+    }
+
+    // Reading mode virtualizes the preview sizer while scrolling and drops nodes it
+    // didn't render, so put the panel back whenever the renderer removes it.
+    keepPanelAttached(ct, host, panel) {
+        if (typeof MutationObserver === 'undefined') return;
+        const observer = new MutationObserver(() => {
+            if (!ct.isConnected) return this.disconnectPanelObserver(ct);
+            if (panel.parentElement !== host) {
+                if (host !== ct) host.classList.add('infobox-readable-host');
+                ct.classList.add('has-infobox');
+                host.appendChild(panel);
+            }
+        });
+        observer.observe(host, { childList: true });
+        this._panelObservers.set(ct, observer);
+    }
+
+    disconnectPanelObserver(ct) {
+        this._panelObservers.get(ct)?.disconnect();
+        this._panelObservers.delete(ct);
     }
     async showFrontmatterRepair(view, file, request) {
         const source = await this.app.vault.cachedRead(file);

@@ -150,6 +150,38 @@ for (const mode of ['preview', 'source']) {
     assert(active.children.some(child => child.cls === 'infobox-panel'), `${mode} must host the infobox in its active sizer`);
     assert.equal(hidden.children.length, 0, `${mode} must not use the hidden sizer`);
 }
+{
+    // Reading mode virtualization empties the preview sizer while scrolling (#12).
+    const observers = [];
+    global.MutationObserver = class {
+        constructor(callback) { this.callback = callback; observers.push(this); }
+        observe(target) { this.target = target; }
+        disconnect() { this.disconnected = true; }
+    };
+    Object.defineProperty(TestElement.prototype, 'parentElement', { get() { return this.parent; }, configurable: true });
+    const readingContainer = new TestElement('div');
+    readingContainer.isConnected = true;
+    const readable = new TestElement('div', { cls: 'is-readable-line-width' });
+    const preview = new TestElement('div', { cls: 'markdown-preview-sizer' });
+    readable.appendChild(preview);
+    readingContainer.previewSizer = preview;
+    const leaf = { view: {
+        containerEl: readingContainer, contentEl: readingContainer,
+        file: { path: 'Long.md' }, getViewType: () => 'markdown', getMode: () => 'preview'
+    } };
+    plugin.processLeaf(leaf);
+    const panel = preview.children.find(child => child.cls === 'infobox-panel');
+    assert(panel, 'reading mode should render the panel');
+    preview.children = [];
+    panel.parent = null;
+    observers.at(-1).callback([]);
+    assert(preview.children.includes(panel), 'panel must be re-attached after the reading view drops it');
+
+    plugin.processLeaf(leaf);
+    assert(observers.at(-2).disconnected, 'refreshing must disconnect the previous observer');
+    delete global.MutationObserver;
+    delete TestElement.prototype.parentElement;
+}
 assert(!require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8').includes('padding-right: 300px'));
 
 console.log('infobox-layout tests passed');
