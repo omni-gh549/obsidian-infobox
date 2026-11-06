@@ -42,6 +42,7 @@ class TestElement {
     }
 
     appendChild(child) {
+        if (child.parent) child.parent.children = child.parent.children.filter(c => c !== child);
         if (child && typeof child === 'object') child.parent = this;
         this.children.push(child);
         return child;
@@ -129,8 +130,8 @@ plugin.processLeaf({
 });
 
 assert(container.classList.contains('has-infobox'), 'container should have has-infobox class');
-assert(cmSizer.children.some(child => child.cls === 'infobox-panel'), 'readable sizer should host the panel');
-assert(cmSizer.classList.contains('infobox-readable-host'));
+assert(container.children.some(child => child.cls === 'infobox-panel'), 'desktop panel must be outside the virtualized sizer');
+assert(container.classList.contains('infobox-docked'));
 for (const mode of ['preview', 'source']) {
     const modeContainer = new TestElement('div');
     const readable = new TestElement('div', { cls: 'is-readable-line-width' });
@@ -147,12 +148,16 @@ for (const mode of ['preview', 'source']) {
     } });
     const active = mode === 'preview' ? preview : source;
     const hidden = mode === 'preview' ? source : preview;
-    assert(active.children.some(child => child.cls === 'infobox-panel'), `${mode} must host the infobox in its active sizer`);
+    assert(modeContainer.children.some(child => child.cls === 'infobox-panel'), `${mode} desktop panel must belong to the stable leaf`);
+    assert.equal(active.children.length, 0);
     assert.equal(hidden.children.length, 0, `${mode} must not use the hidden sizer`);
 }
 {
     // Reading mode virtualization empties the preview sizer while scrolling (#12).
     const observers = [];
+    const frames = [];
+    global.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    global.cancelAnimationFrame = () => {};
     global.MutationObserver = class {
         constructor(callback) { this.callback = callback; observers.push(this); }
         observe(target) { this.target = target; }
@@ -161,6 +166,7 @@ for (const mode of ['preview', 'source']) {
     Object.defineProperty(TestElement.prototype, 'parentElement', { get() { return this.parent; }, configurable: true });
     const readingContainer = new TestElement('div');
     readingContainer.isConnected = true;
+    readingContainer.clientWidth = 400;
     const readable = new TestElement('div', { cls: 'is-readable-line-width' });
     const preview = new TestElement('div', { cls: 'markdown-preview-sizer' });
     readable.appendChild(preview);
@@ -175,11 +181,28 @@ for (const mode of ['preview', 'source']) {
     preview.children = [];
     panel.parent = null;
     observers.at(-1).callback([]);
-    assert(preview.children.includes(panel), 'panel must be re-attached after the reading view drops it');
+    frames.shift()();
+    assert(preview.children.includes(panel), 'narrow panel must be re-attached after the reading view drops it');
+
+    // Replacing the entire sizer is the case the old observer never saw (#13).
+    const replacement = new TestElement('div', { cls: 'markdown-preview-sizer' });
+    readingContainer.previewSizer = replacement;
+    observers.at(-1).callback([]);
+    frames.shift()();
+    assert(replacement.children.includes(panel), 'panel must follow a replacement sizer');
+
+    // Widening a split must move the existing card back to the stable leaf.
+    readingContainer.clientWidth = 1000;
+    observers.at(-1).callback([]);
+    frames.shift()();
+    assert(readingContainer.children.includes(panel));
+    assert(readingContainer.classList.contains('infobox-docked'));
 
     plugin.processLeaf(leaf);
     assert(observers.at(-2).disconnected, 'refreshing must disconnect the previous observer');
     delete global.MutationObserver;
+    delete global.requestAnimationFrame;
+    delete global.cancelAnimationFrame;
     delete TestElement.prototype.parentElement;
 }
 assert(!require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8').includes('padding-right: 300px'));
