@@ -355,10 +355,10 @@ function setupPlugin() {
 }
 
 // ── Test 6: 'add-infobox' command registration ───────────────────
-{
+require('node:test').test('add command registration', async () => {
     const plugin = setupPlugin();
 
-    plugin.onload();
+    await plugin.onload();
 
     const addInfoboxCmd = plugin.commands.find(c => c.id === 'add-infobox');
     assert(addInfoboxCmd, 'add-infobox command must be registered');
@@ -371,13 +371,13 @@ function setupPlugin() {
     // Test checkCallback when a file is active
     plugin.app.workspace.getActiveFile = () => ({ basename: 'Einstein', path: 'Einstein.md' });
     assert.strictEqual(addInfoboxCmd.checkCallback(true), true);
-}
+});
 
 // ── Test 7: 'remove-infobox' command registration ────────────────
-{
+require('node:test').test('remove command registration', async () => {
     const plugin = setupPlugin();
 
-    plugin.onload();
+    await plugin.onload();
 
     const removeCmd = plugin.commands.find(c => c.id === 'remove-infobox');
     assert(removeCmd, 'remove-infobox command must be registered');
@@ -395,7 +395,7 @@ function setupPlugin() {
     // Should return true when file has infobox
     plugin.app.metadataCache.getFileCache = () => ({ frontmatter: { infobox: { title: 'Test' } } });
     assert.strictEqual(removeCmd.checkCallback(true), true);
-}
+});
 
 // ── Test 8: Live image rearranging in modal (moveImage) ──────────
 {

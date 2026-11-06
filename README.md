@@ -13,6 +13,8 @@ An Obsidian plugin that renders Wikipedia-style infoboxes from YAML frontmatter,
 - Supports internal wikilinks with aliases throughout titles, captions, and fields
 - Tag integration with add, remove, reorder, and toggle visibility
 - Automatic light/dark theme support
+- Optional per-note colors and integration with Style Settings
+- Reusable infobox templates stored as ordinary vault notes
 - Works on desktop and mobile
 
 ## Installation
@@ -33,8 +35,39 @@ Search for **Omni Infobox** in the Obsidian community plugin browser.
 
 Open the Command Palette (`Ctrl/Cmd + P`) to access:
 
-- **Omni Infobox: Add/Edit Infobox** — initializes an infobox on the current note, or opens the editor if one already exists
+- **Omni Infobox: Add infobox** — initializes an infobox on the current note, or opens the editor if one already exists
 - **Omni Infobox: Remove Infobox** — removes the `infobox` block from frontmatter entirely (only available when the note has an infobox)
+- **Omni Infobox: Insert infobox template** — imports an infobox from a template note; asks before replacing an existing infobox
+
+### Templates
+
+Open an infobox's editor and choose **Save as template**. Enter a name to save a copy of its sections, labels, values, images, tags, and colors in the **Infobox templates** vault folder. Existing templates are never overwritten. You can edit these template notes like any other note, including clearing example field values.
+
+On another note, run **Insert infobox template** and choose a template. The imported title becomes the destination note's name. The note body and other frontmatter properties are preserved. Templates are independent copies: editing one does not change infoboxes already imported from it.
+
+Change the template folder under **Settings → Omni Infobox**. You can also place existing notes with an `infobox:` block in that folder, including subfolders. This works alongside Obsidian's core Templates plugin; it does not require it.
+
+### Colors and layout
+
+Expand **Colors** in the infobox editor to set an optional card background, text, section background, section text, and border color. Use hex colors such as `#e6f0e9` or `#315b43`; clear a value to return to the theme default. For vault-wide colors, install the optional [Style Settings plugin](https://github.com/community-archive/obsidian-style-settings) and open its **Omni Infobox** section, with separate light and dark colors. Per-note colors take precedence.
+
+The same values can be stored in frontmatter:
+
+```yaml
+infobox:
+  title: Character
+  colors:
+    background: '#e6f0e9'
+    text: '#203329'
+    section: '#315b43'
+    sectionText: '#ffffff'
+    border: '#a3baa9'
+  fields:
+    - section: Identity
+    - Name: Example
+```
+
+Wide panes reserve space beside the note for a pinned infobox. Panes narrower than 700 CSS pixels show the card above the note content, inside its scroll area. Resizing panes or switching between Reading view, Live Preview, and Source mode updates placement automatically.
 
 ### Visual editor
 
@@ -161,6 +194,8 @@ images:
 ## Contributing
 
 Issues and pull requests are welcome.
+
+Run `npm ci` and `npm test` for regression tests. For real-app checks, use a disposable vault named `test-vault` with the plugin installed, start Obsidian with a separate `--user-data-dir` and `--remote-debugging-port=9237`, then run `npm run test:obsidian`. Set `OBSIDIAN_CDP` to use another debugging URL. The smoke test refuses to run against other vault names; it creates `Smoke*.md` notes and a template in this test vault. Enable Style Settings there to include its integration checks. Screenshots are written to `output/playwright` (or `OBSIDIAN_TEST_OUTPUT`). No debugging connection is needed for normal plugin use.
 
 ## License
 

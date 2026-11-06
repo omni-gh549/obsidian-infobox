@@ -1,14 +1,38 @@
-/* changed a lot of hard coded values to vars for themes */
-/* kind of messy since i transferred some values to their
-own infobox vars. can consolidate it all later */
-
-#infobox-edit-modal,
-.infobox-panel {
-    --infobox-primary: var(--background-secondary);
-    --infobox-secondary: var(--color-base-30);
-    --infobox-tertiary: var(--color-base-00);
-    --infobox-border-color: var(--color-base-30);
-}
+/* @settings
+name: Omni Infobox
+id: omni-infobox
+settings:
+  - id: infobox-primary
+    title: Card background
+    type: variable-themed-color
+    format: hex
+    default-light: '#f6f6f6'
+    default-dark: '#262626'
+  - id: infobox-text
+    title: Text
+    type: variable-themed-color
+    format: hex
+    default-light: '#222222'
+    default-dark: '#dadada'
+  - id: infobox-secondary
+    title: Section background
+    type: variable-themed-color
+    format: hex
+    default-light: '#e0e0e0'
+    default-dark: '#363636'
+  - id: infobox-section-text
+    title: Section text
+    type: variable-themed-color
+    format: hex
+    default-light: '#444444'
+    default-dark: '#dadada'
+  - id: infobox-border-color
+    title: Borders
+    type: variable-themed-color
+    format: hex
+    default-light: '#d4d4d4'
+    default-dark: '#454545'
+*/
 
 /* ── Panel container ─────────────────────────────────────────── */
 /* Absolutely positioned and pinned top-right. */
@@ -17,8 +41,8 @@ own infobox vars. can consolidate it all later */
 live edit/reading mode compatibility */
 .infobox-panel {
     position: absolute;
-    top: 48px;
-    right: 36px;
+    top: 60px;
+    right: 16px;
     width: 280px;
     z-index: 10;
     /* trying to account for the status bar */
@@ -27,7 +51,7 @@ live edit/reading mode compatibility */
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     font-size: 13px;
     line-height: 1.55;
-    color: var(--text-normal);
+    color: var(--infobox-text, var(--text-normal));
     user-select: text;
 
     display: flex;
@@ -36,18 +60,17 @@ live edit/reading mode compatibility */
 
 }
 
-/* Place the panel in the readable text gutter without shrinking the note. */
-.infobox-panel.infobox-panel-readable {
-    top: 0;
-    right: auto;
-    left: calc(100% + 24px);
-    max-height: calc(100vh - 96px);
+/* Reserve room inside this leaf; no panel can be clipped beyond its edge. */
+.infobox-docked > .view-content {
+    margin-right: 312px;
 }
 
-.has-infobox .markdown-preview-sizer.infobox-readable-host,
-.has-infobox .cm-sizer.infobox-readable-host {
+.infobox-panel.infobox-panel-inline {
     position: relative;
-    overflow: visible;
+    inset: auto;
+    width: min(100%, 360px);
+    max-height: none;
+    margin: 0 0 24px auto;
 }
 
 #infobox-edit-modal .modal-content {
@@ -68,21 +91,23 @@ live edit/reading mode compatibility */
 }
 
 .infobox-panel::-webkit-scrollbar-thumb {
-    background: var(--infobox-tertiary);
+    background: var(--background-primary);
     border-radius: 2px;
 }
 
 .infobox-supertitle,
 .infobox-subtitle,
 .infobox-title {
-    border-bottom: 1px solid var(--infobox-border-color);
+    border-bottom: 1px solid var(--infobox-border-color, var(--background-modifier-border));
 }
 
 
 /* ── Card ───────────────────────────────────────────────────── */
 .infobox {
-    background-color: var(--infobox-primary);
-    border: 1px solid var(--infobox-border-color);
+    width: 100%;
+    min-height: 0;
+    background-color: var(--infobox-primary, var(--background-secondary));
+    border: 1px solid var(--infobox-border-color, var(--background-modifier-border));
     border-radius: 10px;
     overflow-y: auto;
 }
@@ -97,7 +122,7 @@ live edit/reading mode compatibility */
     text-align: center;
     padding: var(--menu-padding);
     font-style: italic;
-    color: var(--text-faint);
+    color: var(--infobox-text, var(--text-muted));
     font-size: var(--font-ui-small);
 }
 
@@ -129,7 +154,7 @@ live edit/reading mode compatibility */
     padding: 4px 16px;
     font-size: var(--font-smaller);
     font-style: italic;
-    color: var(--text-faint);
+    color: var(--infobox-text, var(--text-muted));
     margin-top: -12px;
 }
 
@@ -153,7 +178,8 @@ live edit/reading mode compatibility */
     max-width: 100%;
     padding: 2px 7px;
     border-radius: 999px;
-    background: #f2f5f8;
+    background: var(--tag-background, var(--background-modifier-hover));
+    color: var(--tag-color, var(--text-accent));
     /* color: #4f6f8f; */
     font-size: 0.82em;
     font-weight: 600;
@@ -163,7 +189,7 @@ live edit/reading mode compatibility */
 }
 
 .infobox-tag:hover {
-    background: #e5edf5;
+    background: var(--tag-background-hover, var(--background-modifier-hover));
     /* color: #385a78; */
     text-decoration: none;
 }
@@ -172,7 +198,7 @@ live edit/reading mode compatibility */
 .infobox-section,
 .infobox-row,
 .infobox-tags {
-    border-bottom: 1px solid var(--background-modifier-border);
+    border-bottom: 1px solid var(--infobox-border-color, var(--background-modifier-border));
 }
 
 /* ── Section headers ────────────────────────────────────────── */
@@ -181,10 +207,10 @@ live edit/reading mode compatibility */
     padding: 7px 16px;
     font-size: 0.72em;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--infobox-section-text, var(--infobox-text, var(--text-muted)));
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    background: var(--color-base-30);
+    background: var(--infobox-secondary, var(--background-modifier-hover));
 }
 
 /* ── List formatting inside fields ────────────────────────── */
@@ -210,14 +236,18 @@ ul.infobox-list {
 .infobox-label {
     flex: 0 0 auto;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--infobox-text, var(--text-muted));
     font-size: 0.9em;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    max-width: 48%;
 }
 
 
 .infobox-value {
     flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
     text-align: right;
 }
 
@@ -236,8 +266,8 @@ ul.infobox-list {
 
 .infobox-gallery {
     width: 100%;
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--infobox-border-color);
+    background: var(--infobox-primary, var(--background-secondary));
+    border-bottom: 1px solid var(--infobox-border-color, var(--background-modifier-border));
 }
 
 .infobox-image-tabs {
@@ -255,8 +285,8 @@ button.infobox-image-tab {
     /* border-right: 1px solid #ededed; */
     border-radius: 0;
 
-    background: var(--infobox-secondary);
-    color: var(--text-faint);
+    background: var(--infobox-secondary, var(--background-modifier-hover));
+    color: var(--infobox-text, var(--text-muted));
 
     font: inherit;
     font-size: 0.9em;
@@ -267,13 +297,13 @@ button.infobox-image-tab {
 
 
 button.infobox-image-tab:hover {
-    background: var(--infobox-primary);
+    background: var(--infobox-primary, var(--background-secondary));
     /* color: #333; */
 }
 
 button.infobox-image-tab.is-active {
-    background: var(--background-primary);
-    color: var(--text-normal);
+    background: var(--infobox-primary, var(--background-primary));
+    color: var(--infobox-text, var(--text-normal));
     /* box-shadow: inset 0 -3px 0 var(--interactive-accent); */
 }
 
@@ -308,7 +338,7 @@ button.infobox-image-tab.is-active {
     line-height: 1.4;
     margin: 10px 0 4px;
     padding-bottom: 3px;
-    border-bottom: 1px solid var(--infobox-border-color);
+    border-bottom: 1px solid var(--infobox-border-color, var(--background-modifier-border));
     text-align: left;
 }
 
@@ -352,7 +382,7 @@ button.infobox-image-tab.is-active {
 .infobox-edit-label {
     font-weight: 600;
     margin: 6px 0;
-    color: var(--text-muted);
+    color: var(--infobox-text, var(--text-muted));
     font-size: 0.9em;
 }
 
@@ -364,6 +394,23 @@ button.infobox-image-tab.is-active {
 
 .infobox-edit-input-container input[type="text"] {
     flex: 1;
+}
+
+.infobox-edit-colors summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.infobox-edit-color-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.infobox-edit-color-label input {
+    width: 160px;
+    max-width: 50%;
 }
 
 .infobox-edit-section {
@@ -499,9 +546,9 @@ button.infobox-image-tab.is-active {
     gap: 6px;
     padding: 8px;
     margin-bottom: 8px;
-    border: 1px solid var(--infobox-border-color);
+    border: 1px solid var(--infobox-border-color, var(--background-modifier-border));
     border-radius: var(--radius-s);
-    background-color: var(--infobox-primary);
+    background-color: var(--infobox-primary, var(--background-secondary));
     transition: opacity 0.15s ease, background-color 0.15s ease;
 }
 
@@ -522,7 +569,7 @@ button.infobox-image-tab.is-active {
 
     input {
         flex: 1;
-        background-color: var(--infobox-tertiary);
+        background-color: var(--background-primary);
     }
 
     input:active,
@@ -550,7 +597,7 @@ button.infobox-image-tab.is-active {
 .infobox-edit-drag-handle {
     cursor: grab;
     user-select: none;
-    color: var(--text-faint);
+    color: var(--infobox-text, var(--text-muted));
     font-size: 1.2em;
     padding: 0 4px;
     display: flex;
@@ -697,7 +744,7 @@ button.infobox-image-tab.is-active {
 }
 
 .infobox-edit-empty-notice {
-    color: var(--text-faint);
+    color: var(--infobox-text, var(--text-muted));
     font-size: 0.85em;
     display: block;
     margin-bottom: 8px;

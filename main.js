@@ -8,6 +8,14 @@ const debounce = obsidian.debounce || ((fn, delay) => fn);
 const MarkdownRenderer = obsidian.MarkdownRenderer;
 const Menu = obsidian.Menu || class Menu { };
 const Keymap = obsidian.Keymap;
+const COLOR_FIELDS = {
+    background: ['Card background', '--infobox-primary'],
+    text: ['Text', '--infobox-text'],
+    section: ['Section background', '--infobox-secondary'],
+    sectionText: ['Section text', '--infobox-section-text'],
+    border: ['Borders', '--infobox-border-color']
+};
+const isColor = value => typeof value === 'string' && /^#(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i.test(value);
 
 // Only offer a repair when quoting standalone wikilink values makes the entire
 // frontmatter valid. The original note is changed only by the repair button.
@@ -246,11 +254,12 @@ function deleteWithUndo(input, start, end) {
 }
 
 class InfoboxEditModal extends Modal {
-    constructor(app, file, currentData) {
+    constructor(app, file, currentData, plugin) {
         super(app);
         this.setTitle('Edit Infobox');
         this.file = file;
         this.currentData = currentData;
+        this.plugin = plugin;
         this.debouncedSave = debounce(this.saveDetails.bind(this), 300, true);
         this.debouncedSaveFields = debounce(this.saveFields.bind(this), 300, true);
         this.debouncedSaveGallery = debounce(this.saveGallery.bind(this), 300, true);
@@ -274,6 +283,10 @@ class InfoboxEditModal extends Modal {
                 if (details[key] === '' || details[key] == null) delete frontmatter.infobox[key];
                 else frontmatter.infobox[key] = details[key];
             }
+            const colors = Object.fromEntries(Object.keys(COLOR_FIELDS)
+                .filter(key => isColor(details.colors?.[key])).map(key => [key, details.colors[key]]));
+            if (Object.keys(colors).length) frontmatter.infobox.colors = colors;
+            else delete frontmatter.infobox.colors;
         });
     }
 
@@ -1037,6 +1050,12 @@ class InfoboxEditModal extends Modal {
 
         modalEl.id = 'infobox-edit-modal';
 
+        if (this.plugin) {
+            const templates = contentEl.createDiv({ cls: 'infobox-edit-buttons-row' });
+            const saveTemplate = templates.createEl('button', { text: 'Save as template', attr: { type: 'button' } });
+            saveTemplate.addEventListener('click', () => new SaveTemplateModal(this.app, this.plugin, this.currentData).open());
+        }
+
         // Setup auto-pairing and smart markdown paste across all modal inputs & textareas
         modalEl.addEventListener('keydown', this.boundHandleKeyDown);
         modalEl.addEventListener('paste', this.boundHandlePaste);
@@ -1084,6 +1103,25 @@ class InfoboxEditModal extends Modal {
                 this.debouncedSave(key, e.target.value);
             });
         });
+
+        const appearance = contentEl.createEl('details', { cls: 'infobox-edit-section infobox-edit-colors' });
+        appearance.createEl('summary', { text: 'Colors' });
+        appearance.createEl('p', { text: 'Optional hex colors for this note. Leave blank to use your theme.', cls: 'infobox-edit-empty-notice' });
+        for (const [key, [label]] of Object.entries(COLOR_FIELDS)) {
+            const row = appearance.createDiv({ cls: 'infobox-edit-row' });
+            const wrapper = row.createEl('label', { text: label, cls: 'infobox-edit-label infobox-edit-color-label' });
+            const input = wrapper.createEl('input', { type: 'text', value: this.currentData.colors?.[key] || '',
+                attr: { 'aria-label': label, placeholder: 'Theme default' } });
+            input.addEventListener('input', () => {
+                const value = input.value.trim();
+                const valid = !value || isColor(value);
+                input.setCustomValidity(valid ? '' : 'Enter a hex color such as #426b52, or leave blank.');
+                input.setAttribute('aria-invalid', String(!valid));
+                if (!valid) return;
+                this.currentData.colors = { ...this.currentData.colors, [key]: value };
+                this.debouncedSave();
+            });
+        }
 
         // Tags Section
         const tagsSection = contentEl.createDiv({ cls: 'infobox-edit-section' });
@@ -1135,6 +1173,8 @@ class InfoboxEditModal extends Modal {
             attr: { type: 'button', 'aria-label': 'Save infobox' }
         });
         saveBtn.addEventListener('click', async () => {
+            const invalid = contentEl.querySelector('input[aria-invalid="true"]');
+            if (invalid) { invalid.reportValidity(); return; }
             saveBtn.disabled = true;
             saveStatus.textContent = 'Saving...';
             for (const save of [this.debouncedSave, this.debouncedSaveFields,
@@ -1185,18 +1225,88 @@ class ImageSuggestModal extends FuzzySuggestModal {
     }
 }
 
+class TemplateSuggestModal extends FuzzySuggestModal {
+    constructor(app, plugin, file) { super(app); this.plugin = plugin; this.file = file; this.setPlaceholder('Choose an infobox template'); }
+    getItems() { return this.plugin.getTemplateFiles(); }
+    getItemText(file) { return file.path; }
+    onChooseItem(source) {
+        const existing = this.app.metadataCache.getFileCache(this.file)?.frontmatter?.infobox;
+        if (existing) {
+            const modal = new Modal(this.app);
+            modal.setTitle('Replace existing infobox?');
+            modal.contentEl.createEl('p', { text: 'This replaces only the infobox. Other properties and the note body are preserved.' });
+            const cancel = modal.contentEl.createEl('button', { text: 'Cancel' });
+            cancel.onclick = () => modal.close();
+            const replace = modal.contentEl.createEl('button', { text: 'Replace infobox', cls: 'mod-warning' });
+            replace.onclick = () => { modal.close(); this.plugin.importTemplate(this.file, source, true); };
+            modal.open();
+        } else this.plugin.importTemplate(this.file, source);
+    }
+}
+
+class SaveTemplateModal extends Modal {
+    constructor(app, plugin, data) { super(app); this.plugin = plugin; this.data = JSON.parse(JSON.stringify(data)); }
+    onOpen() {
+        this.setTitle('Save infobox template');
+        this.contentEl.createEl('p', { text: 'Save a copy of these fields, values, images, and colors as a reusable vault note. Imported titles use the destination note name.' });
+        const input = this.contentEl.createEl('input', { type: 'text', attr: { 'aria-label': 'Template name', placeholder: 'Template name' } });
+        const status = this.contentEl.createEl('p', { attr: { role: 'status' } });
+        const button = this.contentEl.createEl('button', { text: 'Save template', cls: 'mod-cta' });
+        button.onclick = async () => {
+            button.disabled = true;
+            try { await this.plugin.saveTemplate(input.value, this.data); this.close(); }
+            catch (error) { status.textContent = error.message; button.disabled = false; }
+        };
+        input.focus();
+    }
+}
+
+class InfoboxSettingTab extends (obsidian.PluginSettingTab || class {}) {
+    constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
+    display() {
+        this.containerEl.empty();
+        new obsidian.Setting(this.containerEl)
+            .setName('Template folder')
+            .setDesc('Vault folder containing template notes with an infobox. Use “Save as template” in the editor, then “Insert infobox template” from the command palette.')
+            .addText(text => text.setPlaceholder('Infobox templates').setValue(this.plugin.settings.templateFolder).onChange(async value => {
+                try {
+                    this.plugin.templateFolder(value);
+                    this.plugin.settings.templateFolder = value.trim() || 'Infobox templates';
+                    await this.plugin.saveData(this.plugin.settings);
+                } catch (_) { new obsidian.Notice('Use a vault-relative folder without .. or special filename characters.'); }
+            }));
+        this.containerEl.createEl('p', { text: 'Set colors for individual notes in the infobox editor. For vault-wide colors, install Style Settings and open its Omni Infobox section. Theme colors are used by default.' });
+    }
+}
+
 class InfoboxPlugin extends Plugin {
     _pending = null;
     _repairRequests = new WeakMap();
     _panelObservers = new Map();
+    settings = { templateFolder: 'Infobox templates' };
 
     async onload() {
+        this.settings = { ...this.settings, ...(await this.loadData?.()) };
+        if (obsidian.PluginSettingTab) this.addSettingTab(new InfoboxSettingTab(this.app, this));
         const r = () => this.scheduleRefresh();
         this.registerEvent(this.app.workspace.on('layout-change', r));
         this.registerEvent(this.app.workspace.on('active-leaf-change', r));
         this.registerEvent(this.app.metadataCache.on('changed', r));
         this.registerEvent(this.app.workspace.on('css-change', r));
         this.app.workspace.onLayoutReady(r);
+
+        this.addCommand({
+            id: 'insert-infobox-template', name: 'Insert infobox template',
+            checkCallback: checking => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file || file.extension !== 'md') return false;
+                if (!checking) {
+                    if (!this.getTemplateFiles().length) new obsidian.Notice('No infobox templates found. Save one from the infobox editor, or add an infobox note to your template folder.');
+                    else new TemplateSuggestModal(this.app, this, file).open();
+                }
+                return true;
+            }
+        });
 
         this.addCommand({
             id: 'add-infobox',
@@ -1219,7 +1329,7 @@ class InfoboxPlugin extends Plugin {
                         });
                     }
 
-                    new InfoboxEditModal(this.app, file, currentIb).open();
+                    new InfoboxEditModal(this.app, file, currentIb, this).open();
                 }
                 return true;
             }
@@ -1246,12 +1356,66 @@ class InfoboxPlugin extends Plugin {
         });
     }
 
+    templateFolder(value = this.settings.templateFolder) {
+        const folder = String(value || 'Infobox templates').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+        if (!folder || folder.startsWith('/') || folder.split('/').some(p => !p || p === '.' || p === '..' || /[<>:"|?*]/.test(p))) {
+            throw new Error('Use a vault-relative template folder without .. or special filename characters.');
+        }
+        return folder;
+    }
+
+    getTemplateFiles() {
+        let folder;
+        try { folder = this.templateFolder() + '/'; } catch (_) { return []; }
+        return this.app.vault.getMarkdownFiles().filter(file => file.path.startsWith(folder) &&
+            this.app.metadataCache.getFileCache(file)?.frontmatter?.infobox &&
+            typeof this.app.metadataCache.getFileCache(file).frontmatter.infobox === 'object')
+            .sort((a, b) => a.path.localeCompare(b.path));
+    }
+
+    async saveTemplate(name, data) {
+        name = name.trim().replace(/\.md$/i, '');
+        if (!name || /[\\/<>:"|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || name === '.' || name === '..') throw new Error('Enter a valid template name without slashes or special filename characters.');
+        const folder = this.templateFolder();
+        let current = '';
+        for (const part of folder.split('/')) {
+            current = current ? current + '/' + part : part;
+            if (!this.app.vault.getAbstractFileByPath(current)) await this.app.vault.createFolder(current);
+        }
+        const path = `${folder}/${name}.md`;
+        if (this.app.vault.getAbstractFileByPath(path)) throw new Error('A template with that name already exists. Choose another name.');
+        await this.app.vault.create(path, '---\n' + obsidian.stringifyYaml({ infobox: JSON.parse(JSON.stringify(data)) }) + '---\n');
+        new obsidian.Notice('Infobox template saved.');
+    }
+
+    async importTemplate(file, source, replace = false) {
+        try {
+            const text = await this.app.vault.read(source);
+            const match = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+            const data = match && obsidian.parseYaml(match[1])?.infobox;
+            if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The selected template does not contain a valid infobox.');
+            const copy = JSON.parse(JSON.stringify(data));
+            copy.title = file.basename;
+            await this.app.fileManager.processFrontMatter(file, fm => {
+                if (fm.infobox && !replace) throw new Error('This note already has an infobox. Choose the template again to confirm replacement.');
+                fm.infobox = copy;
+            });
+            this.scheduleRefresh();
+            new obsidian.Notice('Infobox template inserted.');
+        } catch (error) { new obsidian.Notice('Could not insert infobox template: ' + error.message); }
+    }
+
     onunload() {
         this._repairRequests = new WeakMap();
-        for (const ct of [...this._panelObservers.keys()]) this.disconnectPanelObserver(ct);
+        for (const ct of [...this._panelObservers.keys()]) {
+            this.disconnectPanelObserver(ct);
+            ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
+            ct.classList.remove('has-infobox', 'infobox-docked');
+        }
         if (this._pending != null) cancelAnimationFrame(this._pending);
         document.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         document.querySelectorAll('.has-infobox').forEach(e => e.classList.remove('has-infobox'));
+        document.querySelectorAll('.infobox-docked').forEach(e => e.classList.remove('infobox-docked'));
         document.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
     }
 
@@ -1264,6 +1428,9 @@ class InfoboxPlugin extends Plugin {
     }
 
     refresh() {
+        for (const ct of this._panelObservers.keys()) {
+            if (!ct.isConnected) this.disconnectPanelObserver(ct);
+        }
         this.app.workspace.iterateAllLeaves(leaf => {
             try { this.processLeaf(leaf); }
             catch (e) { console.error('[Infobox]', e); }
@@ -1506,6 +1673,7 @@ class InfoboxPlugin extends Plugin {
         this.disconnectPanelObserver(ct);
         ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         ct.classList.remove('has-infobox');
+        ct.classList.remove('infobox-docked');
         ct.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
 
         const file = view.file;
@@ -1527,6 +1695,9 @@ class InfoboxPlugin extends Plugin {
 
         // ── Build panel ──────────────────────────────────────────
         const panel = createDiv({ cls: 'infobox-panel' });
+        for (const [key, [, variable]] of Object.entries(COLOR_FIELDS)) {
+            if (isColor(ib.colors?.[key])) panel.style.setProperty(variable, ib.colors[key]);
+        }
         const card = panel.createDiv({ cls: 'infobox' });
         const themeClass = this.getThemeClass();
         panel.addClass(themeClass);
@@ -1824,42 +1995,53 @@ class InfoboxPlugin extends Plugin {
         });
         obsidian.setIcon?.(editBtn, 'pencil');
         editBtn.addEventListener('click', () => {
-            new InfoboxEditModal(this.app, file, JSON.parse(JSON.stringify(ib))).open();
+            new InfoboxEditModal(this.app, file, JSON.parse(JSON.stringify(ib)), this).open();
         });
 
-        // Both sizers may exist; the inactive mode's DOM is hidden.
-        const mode = view.getMode?.();
-        const contentSizer = ct.querySelector(mode === 'preview'
-            ? '.markdown-preview-sizer'
-            : mode === 'source' ? '.cm-sizer' : '.markdown-preview-sizer, .cm-sizer');
-        const readableContainer = contentSizer?.closest('.is-readable-line-width') ||
-            ct.closest('.is-readable-line-width') ||
-            view.contentEl?.closest('.is-readable-line-width');
-        let host = ct;
-        if (contentSizer && readableContainer) {
-            contentSizer.classList.add('infobox-readable-host');
-            panel.classList.add('infobox-panel-readable');
-            host = contentSizer;
-        }
-        host.appendChild(panel);
         ct.classList.add('has-infobox');
-        this.keepPanelAttached(ct, host, panel);
+        this.keepPanelAttached(view, panel);
     }
 
-    // Reading mode virtualizes the preview sizer while scrolling and drops nodes it
-    // didn't render, so put the panel back whenever the renderer removes it.
-    keepPanelAttached(ct, host, panel) {
-        if (typeof MutationObserver === 'undefined') return;
-        const observer = new MutationObserver(() => {
-            if (!ct.isConnected) return this.disconnectPanelObserver(ct);
-            if (panel.parentElement !== host) {
-                if (host !== ct) host.classList.add('infobox-readable-host');
-                ct.classList.add('has-infobox');
-                host.appendChild(panel);
+    // Desktop panels belong to the stable leaf, outside Obsidian's virtualized
+    // content. Narrow panes use normal flow; watch the leaf to survive replacement
+    // of an entire sizer, not just removal of its children.
+    keepPanelAttached(view, panel) {
+        const ct = view.containerEl;
+        const file = view.file;
+        const position = () => {
+            if (view.file !== file) { this.scheduleRefresh(); return; }
+            const mode = view.getMode?.();
+            const sizer = ct.querySelector(mode === 'preview' ? '.markdown-preview-sizer' :
+                mode === 'source' ? '.cm-sizer' : '.markdown-preview-sizer, .cm-sizer');
+            const width = ct.clientWidth || 1000;
+            const inline = width < 700 && sizer;
+            const host = inline ? sizer : ct;
+            panel.classList.toggle('infobox-panel-inline', Boolean(inline));
+            ct.classList.toggle('infobox-docked', !inline);
+            if (panel.parentElement !== host) host.appendChild(panel);
+            if (inline) {
+                // Keep the card before virtualized sections without moving it on
+                // each mutation (which would cause an observer feedback loop).
+                if (host.firstChild !== panel && host.insertBefore) host.insertBefore(panel, host.firstChild);
             }
-        });
-        observer.observe(host, { childList: true });
-        this._panelObservers.set(ct, observer);
+        };
+        position();
+        if (typeof MutationObserver === 'undefined') return;
+        const win = ct.ownerDocument?.defaultView || globalThis;
+        let pending = null;
+        const update = () => {
+            if (!ct.isConnected) return this.disconnectPanelObserver(ct);
+            if (pending !== null) return;
+            pending = win.requestAnimationFrame(() => { pending = null; position(); });
+        };
+        const observer = new win.MutationObserver(update);
+        observer.observe(ct, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-mode'] });
+        const resize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(update) : null;
+        resize?.observe(ct);
+        this._panelObservers.set(ct, { disconnect() {
+            observer.disconnect(); resize?.disconnect();
+            if (pending !== null) win.cancelAnimationFrame(pending);
+        } });
     }
 
     disconnectPanelObserver(ct) {
