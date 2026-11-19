@@ -16,6 +16,62 @@ const COLOR_FIELDS = {
     border: ['Borders', '--infobox-border-color']
 };
 const isColor = value => typeof value === 'string' && /^#(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i.test(value);
+const isPlainObject = value => value != null && typeof value === 'object' && !Array.isArray(value);
+// Obsidian's Properties panel offers to "fix" the nested infobox object by
+// converting it to text, which stores this literal string (#17).
+const isConvertedInfobox = value => typeof value === 'string' && value.trim() === '[object Object]';
+
+// Save any unsaved editor text for this note first, so a frontmatter write is
+// never based on an older copy of the note body (#17).
+async function flushOpenEditors(app, file) {
+    const saves = [];
+    app.workspace?.iterateAllLeaves?.(leaf => {
+        const view = leaf?.view;
+        if (view?.file === file && view.getViewType?.() === 'markdown' && typeof view.save === 'function') {
+            saves.push(Promise.resolve(view.save()).catch(error => console.error('[Infobox] Could not save editor', error)));
+        }
+    });
+    await Promise.all(saves);
+}
+
+// All infobox writes go through here: only the infobox (and, when asked, other
+// frontmatter keys) change, and a non-object infobox is replaced rather than
+// written into (a string infobox would otherwise throw in strict mode).
+async function writeInfobox(app, file, mutate) {
+    await flushOpenEditors(app, file);
+    await app.fileManager.processFrontMatter(file, frontmatter => {
+        if (!isPlainObject(frontmatter.infobox)) frontmatter.infobox = {};
+        mutate(frontmatter.infobox, frontmatter);
+    });
+}
+
+// Image values can be a vault path, URL, [[link]], ![[embed]], markdown image or a
+// list of these. An unquoted [[link]] in YAML parses as a nested array.
+function imageSources(value) {
+    if (value == null) return [];
+    if (Array.isArray(value)) return value.flatMap(imageSources);
+    if (isPlainObject(value)) return imageSources(value.image ?? value.path ?? value.url ?? null);
+    const text = String(value).trim();
+    return text ? [text] : [];
+}
+
+function imageSourcePath(value) {
+    let src = String(value ?? '').trim();
+    const markdown = src.match(/^!?\[[^\]]*\]\(\s*<?([^)>]+?)>?(?:\s+["'][^"']*["'])?\s*\)$/);
+    if (markdown) src = markdown[1].trim();
+    src = src.replace(/^!?\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]$/, '$1').trim();
+    if (!/^[a-z][a-z\d+.-]*:/i.test(src) && src.includes('%')) {
+        try { src = decodeURI(src); } catch (_) { }
+    }
+    return src;
+}
+
+function findProperty(frontmatter, name) {
+    if (!frontmatter || !name) return undefined;
+    if (Object.prototype.hasOwnProperty.call(frontmatter, name)) return name;
+    const lower = name.toLowerCase();
+    return Object.keys(frontmatter).find(key => key.toLowerCase() === lower);
+}
 
 // Only offer a repair when quoting standalone wikilink values makes the entire
 // frontmatter valid. The original note is changed only by the repair button.
@@ -277,9 +333,8 @@ class InfoboxEditModal extends Modal {
 
     async saveDetails() {
         const details = { ...this.currentData };
-        await this.app.fileManager.processFrontMatter(this.file, frontmatter => {
-            if (!frontmatter.infobox) frontmatter.infobox = {};
-            for (const key of ['supertitle', 'title', 'subtitle']) {
+        await writeInfobox(this.app, this.file, (_infobox, frontmatter) => {
+            for (const key of ['supertitle', 'title', 'subtitle', 'imageProperty']) {
                 if (details[key] === '' || details[key] == null) delete frontmatter.infobox[key];
                 else frontmatter.infobox[key] = details[key];
             }
@@ -291,8 +346,7 @@ class InfoboxEditModal extends Modal {
     }
 
     async updateYaml(key, value) {
-        await this.app.fileManager.processFrontMatter(this.file, frontmatter => {
-            if (!frontmatter.infobox) frontmatter.infobox = {};
+        await writeInfobox(this.app, this.file, (_infobox, frontmatter) => {
             if (value === '' || value == null) {
                 delete frontmatter.infobox[key];
             } else {
@@ -302,8 +356,7 @@ class InfoboxEditModal extends Modal {
     }
 
     async saveFields() {
-        await this.app.fileManager.processFrontMatter(this.file, frontmatter => {
-            if (!frontmatter.infobox) frontmatter.infobox = {};
+        await writeInfobox(this.app, this.file, (_infobox, frontmatter) => {
             frontmatter.infobox.fields = JSON.parse(JSON.stringify(this.currentData.fields || [])).map(field => {
                 if (!field || typeof field !== 'object' || Array.isArray(field)) return field;
                 const out = {};
@@ -314,8 +367,7 @@ class InfoboxEditModal extends Modal {
     }
 
     async saveGallery() {
-        await this.app.fileManager.processFrontMatter(this.file, frontmatter => {
-            if (!frontmatter.infobox) frontmatter.infobox = {};
+        await writeInfobox(this.app, this.file, (_infobox, frontmatter) => {
             if (Array.isArray(this.currentData.images) && this.currentData.images.length > 0) {
                 frontmatter.infobox.images = JSON.parse(JSON.stringify(this.currentData.images));
                 delete frontmatter.infobox.image;
@@ -329,8 +381,7 @@ class InfoboxEditModal extends Modal {
     }
 
     async saveTags() {
-        await this.app.fileManager.processFrontMatter(this.file, frontmatter => {
-            if (!frontmatter.infobox) frontmatter.infobox = {};
+        await writeInfobox(this.app, this.file, (_infobox, frontmatter) => {
             if (Array.isArray(this.currentData.tags) && this.currentData.tags.length > 0) {
                 frontmatter.infobox.tags = JSON.parse(JSON.stringify(this.currentData.tags));
             } else {
@@ -1141,6 +1192,28 @@ class InfoboxEditModal extends Modal {
         const imageSectionContainer = imageSection.createDiv();
         this.renderGalleryEditor(imageSectionContainer);
 
+        // Image from a note property (#18), used only when no image is set above.
+        const propertyRow = imageSection.createDiv({ cls: 'infobox-edit-row' });
+        propertyRow.createEl('label', { text: 'Image property', cls: 'infobox-edit-label' });
+        const defaultProperty = this.plugin?.settings?.imageProperty || '';
+        const propertyInput = propertyRow.createDiv({ cls: 'infobox-edit-input-container' }).createEl('input', {
+            type: 'text',
+            value: this.currentData.imageProperty || '',
+            attr: {
+                'aria-label': 'Image property',
+                placeholder: defaultProperty ? `Default: ${defaultProperty}` : 'Property name, e.g. cover'
+            }
+        });
+        imageSection.createEl('p', {
+            text: 'When no image is added above, show the image stored in this note property. ' +
+                'Leave blank to use the default property from the plugin settings.',
+            cls: 'infobox-edit-empty-notice'
+        });
+        propertyInput.addEventListener('input', () => {
+            this.currentData.imageProperty = propertyInput.value.trim();
+            this.debouncedSave();
+        });
+
         // Sections & Labels
         const fieldsSection = contentEl.createDiv({ cls: 'infobox-edit-section' });
         fieldsSection.createEl('h3', {
@@ -1275,6 +1348,14 @@ class InfoboxSettingTab extends (obsidian.PluginSettingTab || class {}) {
                     await this.plugin.saveData(this.plugin.settings);
                 } catch (_) { new obsidian.Notice('Use a vault-relative folder without .. or special filename characters.'); }
             }));
+        new obsidian.Setting(this.containerEl)
+            .setName('Image property')
+            .setDesc('Show the image stored in this note property (for example cover or image) when an infobox has no image of its own. Accepts a file name, [[link]], ![[embed]], URL or a list of them. Each infobox can choose a different property in its editor.')
+            .addText(text => text.setPlaceholder('cover').setValue(this.plugin.settings.imageProperty || '').onChange(async value => {
+                this.plugin.settings.imageProperty = value.trim();
+                await this.plugin.saveData(this.plugin.settings);
+                this.plugin.scheduleRefresh();
+            }));
         this.containerEl.createEl('p', { text: 'Set colors for individual notes in the infobox editor. For vault-wide colors, install Style Settings and open its Omni Infobox section. Theme colors are used by default.' });
     }
 }
@@ -1283,7 +1364,8 @@ class InfoboxPlugin extends Plugin {
     _pending = null;
     _repairRequests = new WeakMap();
     _panelObservers = new Map();
-    settings = { templateFolder: 'Infobox templates' };
+    _lastInfobox = new Map();
+    settings = { templateFolder: 'Infobox templates', imageProperty: '' };
 
     async onload() {
         this.settings = { ...this.settings, ...(await this.loadData?.()) };
@@ -1294,6 +1376,8 @@ class InfoboxPlugin extends Plugin {
         this.registerEvent(this.app.metadataCache.on('changed', r));
         this.registerEvent(this.app.workspace.on('css-change', r));
         this.app.workspace.onLayoutReady(r);
+        if (typeof document !== 'undefined') this.guardSelections(document);
+        this.registerEvent(this.app.workspace.on('window-open', win => this.guardSelections(win.doc || win.win?.document)));
 
         this.addCommand({
             id: 'insert-infobox-template', name: 'Insert infobox template',
@@ -1317,19 +1401,24 @@ class InfoboxPlugin extends Plugin {
 
                 if (!checking) {
                     const cache = this.app.metadataCache.getFileCache(file);
-                    const hasExisting = cache?.frontmatter?.infobox && typeof cache.frontmatter.infobox === 'object';
+                    const hasExisting = isPlainObject(cache?.frontmatter?.infobox);
+                    const remembered = this._lastInfobox.get(file.path);
                     const currentIb = hasExisting
                         ? JSON.parse(JSON.stringify(cache.frontmatter.infobox))
-                        : { title: file.basename, fields: [] };
+                        : isConvertedInfobox(cache?.frontmatter?.infobox) && remembered
+                            ? JSON.parse(JSON.stringify(remembered))
+                            : { title: file.basename, fields: [] };
 
-                    // If no infobox exists yet, write the initial structure to frontmatter
-                    if (!hasExisting) {
-                        this.app.fileManager.processFrontMatter(file, frontmatter => {
-                            frontmatter.infobox = JSON.parse(JSON.stringify(currentIb));
-                        });
-                    }
-
-                    new InfoboxEditModal(this.app, file, currentIb, this).open();
+                    // If no infobox exists yet, write the initial structure before the
+                    // editor opens so its saves never race the first write (#17).
+                    const open = () => new InfoboxEditModal(this.app, file, currentIb, this).open();
+                    if (hasExisting) open();
+                    else writeInfobox(this.app, file, (_infobox, frontmatter) => {
+                        frontmatter.infobox = JSON.parse(JSON.stringify(currentIb));
+                    }).then(open, error => {
+                        console.error('[Infobox] Could not add infobox', error);
+                        new obsidian.Notice('Could not add an infobox. Check that the note properties are valid YAML.');
+                    });
                 }
                 return true;
             }
@@ -1410,13 +1499,79 @@ class InfoboxPlugin extends Plugin {
         for (const ct of [...this._panelObservers.keys()]) {
             this.disconnectPanelObserver(ct);
             ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
-            ct.classList.remove('has-infobox', 'infobox-docked');
+            ct.classList.remove('has-infobox', 'infobox-docked', 'infobox-stacked');
         }
         if (this._pending != null) cancelAnimationFrame(this._pending);
         document.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         document.querySelectorAll('.has-infobox').forEach(e => e.classList.remove('has-infobox'));
         document.querySelectorAll('.infobox-docked').forEach(e => e.classList.remove('infobox-docked'));
+        document.querySelectorAll('.infobox-stacked').forEach(e => e.classList.remove('infobox-stacked'));
         document.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
+    }
+
+    // The card's text is selectable so it can be copied. A selection that runs
+    // from the card into the note is read by the editor as reaching the start or
+    // end of the note, and the next Enter or keystroke deleted all of it (#17).
+    // Keep every selection on one side of the card's edge, and refuse edits to a
+    // selection that still crosses it.
+    guardSelections(doc) {
+        if (!doc?.addEventListener || typeof this.registerDomEvent !== 'function') return;
+        const panelOf = node => {
+            const el = node?.nodeType === 1 ? node : node?.parentElement;
+            return el?.closest?.('.infobox-panel') || null;
+        };
+        const crossing = () => {
+            const sel = doc.getSelection?.();
+            if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+            const anchorPanel = panelOf(sel.anchorNode);
+            const focusPanel = panelOf(sel.focusNode);
+            return anchorPanel === focusPanel ? null : { sel, anchorPanel };
+        };
+        const clamp = () => {
+            const hit = crossing();
+            if (!hit) return false;
+            const { sel, anchorPanel } = hit;
+            if (anchorPanel) {
+                // Started on the card: keep the selection inside the card.
+                const range = doc.createRange();
+                range.selectNodeContents(anchorPanel);
+                const forward = Boolean(anchorPanel.compareDocumentPosition(sel.focusNode) & 4);
+                sel.setBaseAndExtent(sel.anchorNode, sel.anchorOffset,
+                    forward ? range.endContainer : range.startContainer,
+                    forward ? range.endOffset : range.startOffset);
+            } else {
+                // Started in the note: never let it reach into the card.
+                sel.collapse(sel.anchorNode, sel.anchorOffset);
+            }
+            return true;
+        };
+        const block = event => {
+            if (!crossing()) return;
+            const key = event.key;
+            const editing = event.type !== 'keydown' || key === 'Enter' || key === 'Backspace' ||
+                key === 'Delete' || key === 'Tab' || (key?.length === 1 && !event.ctrlKey && !event.metaKey) ||
+                ((event.ctrlKey || event.metaKey) && /^[xv]$/i.test(key || ''));
+            if (!editing) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            clamp();
+        };
+        // Capture runs before the editor's own listeners. selectionchange is
+        // asynchronous, and the editor also reads the selection when it gains
+        // focus or the mouse is released, so clamp synchronously then too.
+        for (const type of ['selectionchange', 'focusin', 'mouseup', 'pointerup']) {
+            this.registerDomEvent(doc, type, clamp, { capture: true });
+        }
+        // Shift+click on the card would extend the editor's selection to it.
+        this.registerDomEvent(doc, 'mousedown', event => {
+            const panel = panelOf(event.target);
+            if (!panel || !event.shiftKey) return;
+            const sel = doc.getSelection?.();
+            if (sel?.rangeCount && panelOf(sel.anchorNode) !== panel) event.preventDefault();
+        }, { capture: true });
+        for (const type of ['keydown', 'beforeinput', 'cut', 'paste', 'drop']) {
+            this.registerDomEvent(doc, type, block, { capture: true });
+        }
     }
 
     scheduleRefresh() {
@@ -1673,7 +1828,7 @@ class InfoboxPlugin extends Plugin {
         this.disconnectPanelObserver(ct);
         ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         ct.classList.remove('has-infobox');
-        ct.classList.remove('infobox-docked');
+        ct.classList.remove('infobox-docked', 'infobox-stacked');
         ct.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
 
         const file = view.file;
@@ -1681,7 +1836,11 @@ class InfoboxPlugin extends Plugin {
 
         const cache = this.app.metadataCache.getFileCache(file);
         const fm = cache?.frontmatter;
-        if (!fm?.infobox || typeof fm.infobox !== 'object') {
+        if (!isPlainObject(fm?.infobox)) {
+            if (isConvertedInfobox(fm?.infobox)) {
+                this.showConvertedInfoboxRecovery(view, file);
+                return;
+            }
             if (!fm && this.app.vault?.cachedRead) {
                 this.showFrontmatterRepair(view, file, request).catch(error => {
                     console.error('[Infobox] Could not inspect frontmatter', error);
@@ -1691,6 +1850,7 @@ class InfoboxPlugin extends Plugin {
         }
 
         const ib = fm.infobox;
+        this._lastInfobox.set(file.path, JSON.parse(JSON.stringify(ib)));
         const tags = this.getTags(ib, fm, cache);
 
         // ── Build panel ──────────────────────────────────────────
@@ -1834,7 +1994,7 @@ class InfoboxPlugin extends Plugin {
         }
 
         // Image / image gallery
-        const images = Array.isArray(ib.images) && ib.images.length > 0
+        let images = Array.isArray(ib.images) && ib.images.length > 0
             ? ib.images.filter(e => e && e.image)
             : ib.image
                 ? [{
@@ -1843,6 +2003,7 @@ class InfoboxPlugin extends Plugin {
                     caption: ib.caption || ''
                 }]
                 : [];
+        if (images.length === 0) images = this.getPropertyImages(ib, fm);
 
         if (images.length > 0) {
             const gallery = card.createDiv({ cls: 'infobox-gallery' });
@@ -1863,13 +2024,10 @@ class InfoboxPlugin extends Plugin {
             const resolveImage = imageValue => {
                 if (!imageValue) return '';
 
-                let src = String(imageValue).trim();
+                const src = imageSourcePath(imageValue);
+                if (!src) return '';
 
-                src = src
-                    .replace(/^!?\[\[(.+?)(\|.*)?\]\]$/, '$1')
-                    .trim();
-
-                if (src.startsWith('http')) {
+                if (/^(?:https?|app|data|file):/i.test(src)) {
                     return src;
                 }
 
@@ -2002,46 +2160,83 @@ class InfoboxPlugin extends Plugin {
         this.keepPanelAttached(view, panel);
     }
 
-    // Desktop panels belong to the stable leaf, outside Obsidian's virtualized
-    // content. Narrow panes use normal flow; watch the leaf to survive replacement
-    // of an entire sizer, not just removal of its children.
+    // The card always lives directly in the leaf container, never inside the
+    // editor (CodeMirror) or the virtualized reading view: wide panes dock it in a
+    // reserved right-hand gutter, narrow panes stack it above the note (#12, #17).
     keepPanelAttached(view, panel) {
         const ct = view.containerEl;
         const file = view.file;
         const position = () => {
             if (view.file !== file) { this.scheduleRefresh(); return; }
-            const mode = view.getMode?.();
-            const sizer = ct.querySelector(mode === 'preview' ? '.markdown-preview-sizer' :
-                mode === 'source' ? '.cm-sizer' : '.markdown-preview-sizer, .cm-sizer');
             const width = ct.clientWidth || 1000;
-            const inline = width < 700 && sizer;
-            const host = inline ? sizer : ct;
-            panel.classList.toggle('infobox-panel-inline', Boolean(inline));
-            ct.classList.toggle('infobox-docked', !inline);
-            if (panel.parentElement !== host) host.appendChild(panel);
-            if (inline) {
-                // Keep the card before virtualized sections without moving it on
-                // each mutation (which would cause an observer feedback loop).
-                if (host.firstChild !== panel && host.insertBefore) host.insertBefore(panel, host.firstChild);
+            const content = view.contentEl;
+            const stacked = width < 700 && content?.parentElement === ct;
+            panel.classList.toggle('infobox-panel-stacked', stacked);
+            ct.classList.toggle('infobox-stacked', stacked);
+            ct.classList.toggle('infobox-docked', !stacked);
+            if (stacked) {
+                if (panel.parentElement !== ct || panel.nextSibling !== content) ct.insertBefore(panel, content);
+            } else if (panel.parentElement !== ct) {
+                ct.appendChild(panel);
             }
         };
         position();
-        if (typeof MutationObserver === 'undefined') return;
         const win = ct.ownerDocument?.defaultView || globalThis;
+        if (typeof win.MutationObserver !== 'function') return;
         let pending = null;
         const update = () => {
             if (!ct.isConnected) return this.disconnectPanelObserver(ct);
             if (pending !== null) return;
             pending = win.requestAnimationFrame(() => { pending = null; position(); });
         };
+        // Only the leaf's own children: editor keystrokes and reading-view
+        // rendering never reach this observer.
         const observer = new win.MutationObserver(update);
-        observer.observe(ct, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-mode'] });
+        observer.observe(ct, { childList: true, attributes: true, attributeFilter: ['data-mode'] });
         const resize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(update) : null;
         resize?.observe(ct);
         this._panelObservers.set(ct, { disconnect() {
             observer.disconnect(); resize?.disconnect();
             if (pending !== null) win.cancelAnimationFrame(pending);
         } });
+    }
+
+    getPropertyImages(ib, fm) {
+        const own = typeof ib?.imageProperty === 'string' ? ib.imageProperty.trim() : '';
+        const name = own || String(this.settings?.imageProperty || '').trim();
+        const key = findProperty(fm, name);
+        if (!key || key === 'infobox') return [];
+        return imageSources(fm[key]).map(image => ({ label: '', image, caption: '' }));
+    }
+
+    // Obsidian's Properties panel can turn the infobox into the text
+    // "[object Object]". Offer to put back the last version shown this session.
+    showConvertedInfoboxRecovery(view, file) {
+        const ct = view.containerEl;
+        const remembered = this._lastInfobox.get(file.path);
+        const panel = ct.createDiv({ cls: 'infobox-panel infobox-repair' });
+        panel.createEl('p', {
+            text: 'Obsidian\'s Properties panel converted this infobox to the text "[object Object]". ' +
+                'Avoid its option to convert or change the type of the infobox property.'
+        });
+        const button = panel.createEl('button', {
+            text: remembered ? 'Restore infobox' : 'Start a new infobox',
+            attr: { type: 'button' }
+        });
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            const data = remembered ? JSON.parse(JSON.stringify(remembered)) : { title: file.basename, fields: [] };
+            try {
+                await writeInfobox(this.app, file, (_infobox, frontmatter) => { frontmatter.infobox = data; });
+                this.scheduleRefresh();
+            } catch (error) {
+                button.disabled = false;
+                console.error('[Infobox] Could not restore infobox', error);
+                new obsidian.Notice('Could not restore the infobox. Check that the note properties are valid YAML.');
+            }
+        });
+        ct.classList.add('has-infobox');
+        this.keepPanelAttached(view, panel);
     }
 
     disconnectPanelObserver(ct) {
@@ -2054,7 +2249,6 @@ class InfoboxPlugin extends Plugin {
         const ct = view.containerEl;
         if (view.file !== file || this._repairRequests.get(ct) !== request) return;
         const panel = ct.createDiv({ cls: 'infobox-panel infobox-repair' });
-        ct.classList.add('has-infobox');
         panel.createEl('p', {
             text: 'This infobox contains unquoted wikilink values that are invalid YAML.'
         });
@@ -2070,6 +2264,8 @@ class InfoboxPlugin extends Plugin {
                 new obsidian.Notice('Could not repair infobox YAML. Please quote the wikilink values manually.');
             }
         });
+        ct.classList.add('has-infobox');
+        this.keepPanelAttached(view, panel);
     }
 }
 

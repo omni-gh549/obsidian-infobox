@@ -67,7 +67,7 @@ infobox:
     - Name: Example
 ```
 
-Wide panes reserve space beside the note for a pinned infobox. Panes narrower than 700 CSS pixels show the card above the note content, inside its scroll area. Resizing panes or switching between Reading view, Live Preview, and Source mode updates placement automatically.
+Wide panes reserve space beside the note for a pinned infobox, so it never covers note text. Panes narrower than 700 CSS pixels show the card above the note, outside the editor. Resizing panes or switching between Reading view, Live Preview, and Source mode updates placement automatically. You can select and copy text in the card, but a selection cannot run from the card into the note, so typing in the note never replaces text you did not select.
 
 ### Visual editor
 
@@ -122,6 +122,7 @@ infobox:
 | `image` | string | A single filename or URL. Supports `[[wikilinks]]` and `![[wikilinks]]` |
 | `caption` | string | Small italic text below a single `image` |
 | `images` | list | Image gallery entries, each with `image` and optional `label` and `caption` |
+| `imageProperty` | string | Name of a note property to take the image from when `image`/`images` are empty (see [Images](#images)) |
 | `tags` | list/string | Optional tags to show in the infobox. Falls back to the note's frontmatter and inline tags |
 | `showTags` | boolean | Set to `false` to hide tags for a note |
 | `fields` | list | Array of single-key objects (see below) |
@@ -190,6 +191,25 @@ images:
     image: "[[einstein-lecture.jpg]]"
     caption: Einstein giving a lecture
 ```
+
+#### Images from note properties
+
+An infobox can show an image stored in one of the note's own properties, for example one filled in by Dataview, Templater, or another plugin. Set a default property name under **Settings → Omni Infobox → Image property** (for example `cover`), or pick a property for one infobox in its editor under **Images → Image property**, which is saved as `imageProperty`:
+
+```yaml
+---
+cover: "[[einstein.jpg]]"
+infobox:
+  title: Albert Einstein
+  imageProperty: cover   # optional; overrides the default from settings
+---
+```
+
+The property can hold a filename, `[[link]]`, `![[embed]]`, Markdown image, URL, or a list of these (shown as a gallery). The property name is matched case-insensitively. Images set directly with `image` or `images` always take precedence.
+
+### Troubleshooting
+
+**Properties shows a "Type mismatch" warning on `infobox`.** The infobox is a nested object, which Obsidian's Properties panel cannot display. If the `infobox` property was given a type such as Text, Properties shows a warning that offers to "Display as text". Choose **Cancel**: choosing **Update** and then editing the value replaces the whole infobox with the text `[object Object]`. If that has already happened, the infobox area shows **Restore infobox**, which puts back the last version shown since Obsidian started. Notes changed before that can be recovered with Obsidian's core **File recovery** plugin.
 
 ## Contributing
 

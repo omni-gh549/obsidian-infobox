@@ -153,58 +153,97 @@ for (const mode of ['preview', 'source']) {
     assert.equal(hidden.children.length, 0, `${mode} must not use the hidden sizer`);
 }
 {
-    // Reading mode virtualization empties the preview sizer while scrolling (#12).
+    // Narrow panes stack the card above the note, directly in the leaf. It must
+    // never be placed inside the editor (CodeMirror) or the virtualized reading
+    // view, where it covered text and shared input with the editor (#12, #17).
     const observers = [];
     const frames = [];
     global.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
     global.cancelAnimationFrame = () => {};
     global.MutationObserver = class {
         constructor(callback) { this.callback = callback; observers.push(this); }
-        observe(target) { this.target = target; }
+        observe(target, options) { this.target = target; this.options = options; }
         disconnect() { this.disconnected = true; }
     };
     Object.defineProperty(TestElement.prototype, 'parentElement', { get() { return this.parent; }, configurable: true });
-    const readingContainer = new TestElement('div');
-    readingContainer.isConnected = true;
-    readingContainer.clientWidth = 400;
-    const readable = new TestElement('div', { cls: 'is-readable-line-width' });
-    const preview = new TestElement('div', { cls: 'markdown-preview-sizer' });
-    readable.appendChild(preview);
-    readingContainer.previewSizer = preview;
-    const leaf = { view: {
-        containerEl: readingContainer, contentEl: readingContainer,
-        file: { path: 'Long.md' }, getViewType: () => 'markdown', getMode: () => 'preview'
-    } };
-    plugin.processLeaf(leaf);
-    const panel = preview.children.find(child => child.cls === 'infobox-panel');
-    assert(panel, 'reading mode should render the panel');
-    preview.children = [];
-    panel.parent = null;
-    observers.at(-1).callback([]);
-    frames.shift()();
-    assert(preview.children.includes(panel), 'narrow panel must be re-attached after the reading view drops it');
+    Object.defineProperty(TestElement.prototype, 'nextSibling', {
+        get() { const s = this.parent?.children; return s ? s[s.indexOf(this) + 1] || null : null; }, configurable: true
+    });
+    TestElement.prototype.insertBefore = function insertBefore(child, ref) {
+        if (child.parent) child.parent.children = child.parent.children.filter(c => c !== child);
+        child.parent = this;
+        const index = this.children.indexOf(ref);
+        this.children.splice(index < 0 ? this.children.length : index, 0, child);
+        return child;
+    };
+    const inSizer = sizer => sizer.children.some(child => child.cls === 'infobox-panel');
 
-    // Replacing the entire sizer is the case the old observer never saw (#13).
-    const replacement = new TestElement('div', { cls: 'markdown-preview-sizer' });
-    readingContainer.previewSizer = replacement;
-    observers.at(-1).callback([]);
-    frames.shift()();
-    assert(replacement.children.includes(panel), 'panel must follow a replacement sizer');
+    for (const mode of ['preview', 'source']) {
+        const leafEl = new TestElement('div');
+        leafEl.isConnected = true;
+        leafEl.clientWidth = 400;
+        const header = leafEl.createDiv({ cls: 'view-header' });
+        const content = leafEl.createDiv({ cls: 'view-content' });
+        const preview = content.createDiv({ cls: 'markdown-preview-sizer' });
+        const source = content.createDiv({ cls: 'cm-sizer' });
+        leafEl.previewSizer = preview;
+        leafEl.sourceSizer = source;
+        leafEl.contentSizer = mode === 'preview' ? preview : source;
+        const leaf = { view: {
+            containerEl: leafEl, contentEl: content,
+            file: { path: 'Long.md' }, getViewType: () => 'markdown', getMode: () => mode
+        } };
+        plugin.processLeaf(leaf);
+        const panel = leafEl.children.find(child => child.cls === 'infobox-panel');
+        assert(panel, `${mode}: narrow panel belongs to the leaf`);
+        assert.equal(panel.nextSibling, content, `${mode}: narrow panel sits directly above the note`);
+        assert.equal(leafEl.children.indexOf(header), 0, 'view header stays first');
+        assert(!inSizer(preview) && !inSizer(source), `${mode}: panel is never inside editor or reading DOM`);
+        assert(leafEl.classList.contains('infobox-stacked'));
+        assert(!leafEl.classList.contains('infobox-docked'));
+        assert(panel.classList.contains('infobox-panel-stacked'));
 
-    // Widening a split must move the existing card back to the stable leaf.
-    readingContainer.clientWidth = 1000;
-    observers.at(-1).callback([]);
-    frames.shift()();
-    assert(readingContainer.children.includes(panel));
-    assert(readingContainer.classList.contains('infobox-docked'));
+        const observer = observers.at(-1);
+        assert.equal(observer.target, leafEl);
+        assert(!observer.options.subtree, 'observer must not watch editor keystrokes (subtree)');
 
-    plugin.processLeaf(leaf);
-    assert(observers.at(-2).disconnected, 'refreshing must disconnect the previous observer');
+        // Something removes the card: it is put back in the same place.
+        leafEl.children = leafEl.children.filter(child => child !== panel);
+        panel.parent = null;
+        observer.callback([]);
+        frames.shift()();
+        assert.equal(panel.nextSibling, content, `${mode}: card is restored above the note`);
+
+        // Widening the pane docks the same card in the reserved gutter.
+        leafEl.clientWidth = 1000;
+        observer.callback([]);
+        frames.shift()();
+        assert(leafEl.children.includes(panel));
+        assert(leafEl.classList.contains('infobox-docked'));
+        assert(!leafEl.classList.contains('infobox-stacked'));
+        assert(!panel.classList.contains('infobox-panel-stacked'));
+        assert(!inSizer(preview) && !inSizer(source));
+
+        // Narrowing again stacks it, with no duplicate card.
+        leafEl.clientWidth = 500;
+        observer.callback([]);
+        frames.shift()();
+        assert.equal(panel.nextSibling, content);
+        assert.equal(leafEl.children.filter(child => child.cls === 'infobox-panel').length, 1);
+
+        plugin.processLeaf(leaf);
+        assert(observer.disconnected, 'refreshing must disconnect the previous observer');
+    }
     delete global.MutationObserver;
     delete global.requestAnimationFrame;
     delete global.cancelAnimationFrame;
     delete TestElement.prototype.parentElement;
+    delete TestElement.prototype.nextSibling;
+    delete TestElement.prototype.insertBefore;
 }
+const css = require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8');
+assert(css.includes('.infobox-docked > .view-content'), 'docked card must reserve a gutter so it never covers text');
+assert(!css.includes('infobox-panel-inline'), 'in-editor inline placement is gone');
 assert(!require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8').includes('padding-right: 300px'));
 
 console.log('infobox-layout tests passed');

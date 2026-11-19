@@ -65,12 +65,16 @@ live edit/reading mode compatibility */
     margin-right: 312px;
 }
 
-.infobox-panel.infobox-panel-inline {
+/* Narrow panes: a block between the view header and the note, outside the
+   editor, so it can never cover note text or receive editor input. */
+.infobox-stacked > .infobox-panel.infobox-panel-stacked {
     position: relative;
     inset: auto;
-    width: min(100%, 360px);
-    max-height: none;
-    margin: 0 0 24px auto;
+    flex: 0 1 auto;
+    align-self: center;
+    width: min(calc(100% - 24px), 360px);
+    max-height: 40%;
+    margin: 8px 12px;
 }
 
 #infobox-edit-modal .modal-content {
