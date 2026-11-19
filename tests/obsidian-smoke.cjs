@@ -31,9 +31,32 @@ const path = require('node:path');
         const panel = panels[0];
         const rect = panel?.getBoundingClientRect();
         const leaf = view.containerEl.getBoundingClientRect();
-        return { count: panels.length, inline: panel?.classList.contains('infobox-panel-inline'),
+        return { count: panels.length, stacked: panel?.classList.contains('infobox-panel-stacked'),
+            insideEditor: Boolean(view.contentEl.querySelector('.infobox-panel')),
             connected: panel?.isConnected, x: rect?.x, right: rect?.right, y: rect?.y, width: rect?.width,
             leafLeft: leaf.left, leafRight: leaf.right, title: panel?.querySelector('.infobox-title')?.textContent };
+    });
+    // Visible note text (editor lines or rendered blocks) that overlaps the card.
+    const coveredText = () => page.evaluate(() => {
+        const view = app.workspace.activeLeaf.view;
+        const panel = view.containerEl.querySelector('.infobox-panel');
+        if (!panel) return [];
+        const p = panel.getBoundingClientRect();
+        const scroller = view.containerEl.querySelector(view.getMode() === 'preview' ? '.markdown-preview-view' : '.cm-scroller');
+        const s = scroller.getBoundingClientRect();
+        const nodes = view.containerEl.querySelectorAll(view.getMode() === 'preview'
+            ? '.markdown-preview-sizer > div > :is(p, h1, h2, h3, h4, li)' : '.cm-content .cm-line');
+        const hits = [];
+        for (const node of nodes) {
+            // Rects of the glyphs themselves, limited to the visible scroll area.
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const t of range.getClientRects()) {
+                if (t.width && t.right > p.left && t.left < p.right && t.bottom > p.top && t.top < p.bottom &&
+                    t.bottom > s.top && t.top < s.bottom) hits.push(node.textContent.slice(0, 30));
+            }
+        }
+        return [...new Set(hits)].slice(0, 5);
     });
     await page.evaluate(async () => {
         app.workspace.leftSplit.collapse();
@@ -57,6 +80,10 @@ const path = require('node:path');
             let g = await geometry();
             check(g.count === 1 && g.connected, `one panel at ${width}/${mode}`);
             check(g.x >= g.leafLeft && g.right <= g.leafRight + 1, `panel fits at ${width}/${mode}: ${JSON.stringify(g)}`);
+            check(!g.insideEditor, `panel is never inside the editor or reading view at ${width}/${mode} (#17)`);
+            check(g.stacked === (width < 700), `stacked only in narrow panes at ${width}/${mode}`);
+            const covered = await coveredText();
+            check(covered.length === 0, `panel covers no note text at ${width}/${mode} (#17): ${JSON.stringify(covered)}`);
             for (const fraction of [1, 0.5, 0, 1, 0]) {
                 await page.evaluate(fraction => {
                     const v = app.workspace.activeLeaf.view;
@@ -161,6 +188,7 @@ const path = require('node:path');
         if (await candidate.getByText('Template folder', { exact: true }).isVisible()) settingsPage = candidate;
     }
     check(Boolean(settingsPage), 'native settings tab appears, including separate Settings windows');
+    check(await settingsPage.getByText('Image property', { exact: true }).isVisible(), 'image property setting is shown (#18)');
     await settingsPage.screenshot({ path: path.join(output, 'settings.png') });
     await page.evaluate(() => app.setting.close());
     const hasStyleSettings = await page.evaluate(() => Boolean(app.plugins.plugins['obsidian-style-settings']));
@@ -196,8 +224,191 @@ const path = require('node:path');
         await stylePage.screenshot({ path: path.join(output, 'style-settings.png') });
         await page.evaluate(() => app.setting.close());
     }
+    const read = name => page.evaluate(name => app.vault.read(app.vault.getAbstractFileByPath(name)), name);
+    const editorValue = () => page.evaluate(() => app.workspace.activeLeaf.view.editor.getValue());
+
+    // #17: clicking around the card and pressing Enter in the note must only ever
+    // insert that one newline. Reproduces the reported flow at desktop and narrow widths.
+    for (const width of [1280, 480]) {
+        await page.setViewportSize({ width, height: 900 });
+        await open('Smoke Long.md', 'preview');
+        await open('Smoke Long.md', 'source');
+        const before = await editorValue();
+        const card = page.locator('.workspace-leaf.mod-active .infobox-panel');
+        for (const target of ['.infobox-title', '.infobox-section', '.infobox-label', '.infobox-value']) {
+            await card.locator(target).first().click();
+        }
+        await card.locator('.infobox-title').dblclick();
+        await card.locator('.infobox-title').click({ clickCount: 3 });
+        await page.keyboard.press('Enter');
+        await page.keyboard.type('zz');
+        await page.keyboard.press('Backspace');
+        await settle();
+        check(await editorValue() === before, `clicking and typing on the card never edits the note at ${width} (#17)`);
+        const line = page.locator('.workspace-leaf.mod-active .cm-content .cm-line', { hasText: 'Paragraph 3.' }).first();
+        await line.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await settle();
+        const after = await editorValue();
+        check(after.length === before.length + 1, `Enter in the note inserts exactly one character at ${width} (#17)`);
+        check(Array.from({ length: 180 }, (_, i) => `## Section ${i}`).every(h => after.includes(h)), `every section survives at ${width} (#17)`);
+        // Selections must never run from the note into the card (or back): the
+        // editor read them as reaching the note's start or end, and Enter deleted it.
+        // Measured right before each use (the card can still be settling after a
+        // resize), and checked to really be the card, not the note behind it.
+        const cardPoint = async () => {
+            await settle();
+            const box = await card.locator('.infobox-label').first().boundingBox();
+            const point = { x: box.x + 8, y: box.y + box.height / 2 };
+            const onCard = await page.evaluate(p => Boolean(document.elementFromPoint(p.x, p.y)?.closest('.infobox-panel')), point);
+            check(onCard, `gesture targets the card at ${width}`);
+            return point;
+        };
+        // Each gesture starts from a caret placed by the editor API on a visible
+        // line, and targets that caret's exact screen position.
+        const caret = () => page.evaluate(() => {
+            const e = app.workspace.activeLeaf.view.editor;
+            // End of the line, so each Enter adds a line without splitting the marker.
+            const line = e.getValue().split('\n').findIndex(l => l.startsWith('Paragraph 4.'));
+            if (line < 0) throw new Error('marker line missing');
+            const ch = e.getLine(line).length;
+            e.setCursor({ line, ch });
+            e.focus();
+            const c = e.cm.coordsAtPos(e.posToOffset({ line, ch }));
+            return { x: c.left - 1, y: (c.top + c.bottom) / 2 };
+        });
+        const gestures = {
+            'shift+click on the card': async () => {
+                const at = await cardPoint();
+                await caret();
+                await page.keyboard.down('Shift'); await page.mouse.click(at.x, at.y); await page.keyboard.up('Shift');
+            },
+            'drag from the card into the note': async () => {
+                const at = await cardPoint();
+                const c = await caret();
+                await page.mouse.move(at.x, at.y); await page.mouse.down();
+                await page.mouse.move(c.x, c.y, { steps: 8 }); await page.mouse.up();
+            },
+            'click card, shift+click note': async () => {
+                const at = await cardPoint();
+                const c = await caret();
+                await page.mouse.click(at.x, at.y);
+                await page.keyboard.down('Shift'); await page.mouse.click(c.x, c.y); await page.keyboard.up('Shift');
+            }
+        };
+        for (const [name, gesture] of Object.entries(gestures)) {
+            const start = await editorValue();
+            await gesture();
+            await settle();
+            const crossing = await page.evaluate(() => {
+                const sel = window.getSelection();
+                const inCard = n => Boolean((n?.nodeType === 1 ? n : n?.parentElement)?.closest?.('.infobox-panel'));
+                return !sel.isCollapsed && inCard(sel.anchorNode) !== inCard(sel.focusNode);
+            });
+            const selected = await page.evaluate(() => {
+                const e = app.workspace.activeLeaf.view.editor;
+                return e.listSelections().map(s => e.getRange(s.anchor, s.head)).join('');
+            });
+            await page.keyboard.press('Enter');
+            await settle();
+            const end = await editorValue();
+            check(!crossing, `${name}: no selection crosses the card edge at ${width} (#17)`);
+            check(selected === '', `${name}: the editor selects no text at ${width} (#17): ${JSON.stringify(selected.slice(0, 60))}`);
+            check(end.length >= start.length && end.length <= start.length + 1, `${name}: Enter loses no text at ${width} (#17): ${start.length} -> ${end.length} ${JSON.stringify((() => { let i = 0; while (i < start.length && start[i] === end[i]) i++; return [start.slice(i, i + 40), end.slice(i, i + 40)]; })())}`);
+        }
+        await page.evaluate(() => app.workspace.activeLeaf.view.save());
+        const saved = await read('Smoke Long.md');
+        check(saved.startsWith('---\ninfobox:') && saved.includes('## Section 179') && saved.includes('Edited in source.'),
+            `saved note keeps properties and body at ${width} (#17)`);
+        await page.screenshot({ path: path.join(output, `editing-${width}.png`) });
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+
+    // #17: the Properties panel's "convert" turns the infobox into "[object Object]".
+    await open('Smoke Other.md');
+    await page.evaluate(() => app.fileManager.processFrontMatter(app.vault.getAbstractFileByPath('Smoke Other.md'), fm => { fm.infobox = '[object Object]'; }));
+    await page.waitForTimeout(800);
+    const restore = page.locator('.workspace-leaf.mod-active').getByRole('button', { name: 'Restore infobox', exact: true });
+    check(await restore.isVisible(), 'converted infobox offers a restore button (#17)');
+    await page.screenshot({ path: path.join(output, 'object-object-recovery.png') });
+    await restore.click();
+    await page.waitForTimeout(800);
+    check((await geometry()).title === 'Other note', 'restore brings the infobox back (#17)');
+    check((await read('Smoke Other.md')).endsWith('Other body.\n'), 'restore keeps the note body (#17)');
+
+    // #17 through Obsidian's real Properties UI: with the infobox property typed
+    // as Text, its warning offers "Display as text?" -> Update, and touching the
+    // value then writes "[object Object]". The card must offer a full restore.
+    await page.evaluate(async () => {
+        app.metadataTypeManager.setType('infobox', 'text');
+        const text = '---\ninfobox:\n  title: Props test\n  fields:\n    - Class: Knight\n---\nProps body.\n';
+        const file = app.vault.getAbstractFileByPath('Smoke Props.md');
+        if (file) await app.vault.modify(file, text); else await app.vault.create('Smoke Props.md', text);
+        await app.workspace.activeLeaf.setViewState({ type: 'markdown', state: { file: 'Smoke Props.md', mode: 'source', source: false } });
+    });
+    await page.waitForTimeout(800);
+    const active = page.locator('.workspace-leaf.mod-active');
+    const property = active.locator('.metadata-property[data-property-key="infobox"]');
+    await property.hover();
+    await property.locator('.metadata-property-warning-icon').click();
+    await page.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.waitForTimeout(500);
+    await property.locator('.metadata-property-value').click();
+    await page.keyboard.type(' ');
+    await page.keyboard.press('Backspace');
+    await active.locator('.cm-content .cm-line', { hasText: 'Props body.' }).click();
+    await page.waitForTimeout(1200);
+    check((await read('Smoke Props.md')).includes('infobox: "[object Object]"'), 'Properties UI conversion reproduced');
+    const restoreUi = active.getByRole('button', { name: 'Restore infobox', exact: true });
+    check(await restoreUi.isVisible(), 'restore is offered after a real Properties conversion (#17)');
+    await restoreUi.click();
+    await page.waitForTimeout(1000);
+    const restored = await read('Smoke Props.md');
+    check(restored.includes('title: Props test') && restored.includes('Class: Knight') && restored.endsWith('Props body.\n'),
+        `real conversion is fully restored (#17): ${JSON.stringify(restored)}`);
+    await page.evaluate(() => app.metadataTypeManager.unsetType('infobox'));
+
+    // #18: image from a note property, globally and per note.
+    await page.evaluate(async () => {
+        for (const [name, color] of [['smoke-cover.png', '#2f6f4f'], ['smoke-portrait.png', '#8a3b2e']]) {
+            const canvas = new OffscreenCanvas(64, 64);
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = color; ctx.fillRect(0, 0, 64, 64);
+            const png = await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer();
+            const existing = app.vault.getAbstractFileByPath(name);
+            if (existing) await app.vault.modifyBinary(existing, png); else await app.vault.createBinary(name, png);
+        }
+        const text = '---\ncover: "[[smoke-cover.png]]"\nportrait: "![[smoke-portrait.png]]"\ninfobox:\n  title: Property image\n---\nImage body.\n';
+        const file = app.vault.getAbstractFileByPath('Smoke Image.md');
+        if (file) await app.vault.modify(file, text); else await app.vault.create('Smoke Image.md', text);
+        const plugin = app.plugins.plugins['omni-infobox'];
+        plugin.settings.imageProperty = 'cover';
+        await plugin.saveData(plugin.settings);
+    });
+    await open('Smoke Image.md');
+    await page.waitForTimeout(400);
+    const image = () => page.evaluate(async () => {
+        const img = app.workspace.activeLeaf.view.containerEl.querySelector('.infobox-panel img');
+        if (!img) return null;
+        await img.decode().catch(() => {});
+        return { src: img.getAttribute('src'), width: img.naturalWidth };
+    });
+    let shown = await image();
+    check(shown?.src?.includes('smoke-cover.png') && shown.width === 64, `default image property shows a loaded image (#18): ${JSON.stringify(shown)}`);
+    await page.getByRole('button', { name: 'Edit infobox', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Image property', exact: true }).fill('portrait');
+    await page.getByRole('button', { name: 'Save infobox', exact: true }).click();
+    await page.waitForTimeout(800);
+    shown = await image();
+    check(shown?.src?.includes('smoke-portrait.png') && shown.width === 64, `per-note image property overrides the default (#18): ${JSON.stringify(shown)}`);
+    const imageNote = await read('Smoke Image.md');
+    check(imageNote.includes('imageProperty: portrait') && imageNote.endsWith('Image body.\n'), 'per-note property is saved without touching the body (#18)');
+    await page.screenshot({ path: path.join(output, 'property-image.png') });
+    await open('Smoke Long.md');
+
     await page.evaluate(async () => { await app.plugins.disablePlugin('omni-infobox'); });
-    check(await page.locator('.infobox-panel, .infobox-docked').count() === 0, 'unload removes panels and reserved space');
+    check(await page.locator('.infobox-panel, .infobox-docked, .infobox-stacked').count() === 0, 'unload removes panels and reserved space');
     await page.evaluate(async () => { await app.plugins.enablePlugin('omni-infobox'); });
     await settle();
     check((await geometry()).count === 1, 'reload restores panel');

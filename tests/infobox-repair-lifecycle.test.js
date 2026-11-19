@@ -6,10 +6,11 @@ const vm = require('node:vm');
 const yaml = require('js-yaml');
 
 class Element {
-    constructor() { this.children = []; this.events = {}; this.classList = { add() {} }; }
+    constructor() { this.children = []; this.events = {}; this.classList = { add() {}, remove() {}, toggle() {} }; }
+    appendChild(child) { child.parentElement = this; if (!this.children.includes(child)) this.children.push(child); return child; }
     createEl(tag, options = {}) {
         const child = new Element();
-        Object.assign(child, { tag, options });
+        Object.assign(child, { tag, options, parentElement: this });
         this.children.push(child);
         return child;
     }
