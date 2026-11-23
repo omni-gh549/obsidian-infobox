@@ -153,96 +153,138 @@ for (const mode of ['preview', 'source']) {
     assert.equal(hidden.children.length, 0, `${mode} must not use the hidden sizer`);
 }
 {
-    // Narrow panes stack the card above the note, directly in the leaf. It must
-    // never be placed inside the editor (CodeMirror) or the virtualized reading
-    // view, where it covered text and shared input with the editor (#12, #17).
+    // Narrow panes and phones: the card is the first child of the active mode's
+    // scroll area, so it scrolls away with the note (#21). It is never inside a
+    // sizer (the note text or the reading view's virtualized sections, #12/#17).
     const observers = [];
     const frames = [];
     global.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
     global.cancelAnimationFrame = () => {};
     global.MutationObserver = class {
-        constructor(callback) { this.callback = callback; observers.push(this); }
-        observe(target, options) { this.target = target; this.options = options; }
+        constructor(callback) { this.callback = callback; this.targets = []; observers.push(this); }
+        observe(target, options) { this.targets.push({ target, options }); }
         disconnect() { this.disconnected = true; }
     };
-    Object.defineProperty(TestElement.prototype, 'parentElement', { get() { return this.parent; }, configurable: true });
-    Object.defineProperty(TestElement.prototype, 'nextSibling', {
-        get() { const s = this.parent?.children; return s ? s[s.indexOf(this) + 1] || null : null; }, configurable: true
-    });
-    TestElement.prototype.insertBefore = function insertBefore(child, ref) {
+    const proto = TestElement.prototype;
+    Object.defineProperty(proto, 'parentElement', { get() { return this.parent; }, configurable: true });
+    Object.defineProperty(proto, 'firstChild', { get() { return this.children[0] || null; }, configurable: true });
+    proto.insertBefore = function insertBefore(child, ref) {
         if (child.parent) child.parent.children = child.parent.children.filter(c => c !== child);
         child.parent = this;
         const index = this.children.indexOf(ref);
         this.children.splice(index < 0 ? this.children.length : index, 0, child);
         return child;
     };
-    const inSizer = sizer => sizer.children.some(child => child.cls === 'infobox-panel');
-
-    for (const mode of ['preview', 'source']) {
+    // Minimal "a > b > c" child-chain selector support for the scroller lookup.
+    const originalQuery = proto.querySelector;
+    proto.querySelector = function querySelector(selector) {
+        if (!selector.includes('>')) return originalQuery.call(this, selector);
+        const parts = selector.split('>').map(p => p.trim().replace(/^\./, ''));
+        let level = [this];
+        for (const cls of parts) level = level.flatMap(el => el.children.filter(c => c.classList?.contains(cls)));
+        return level[0] || null;
+    };
+    const style = {};
+    const leafFor = (width, mode) => {
         const leafEl = new TestElement('div');
         leafEl.isConnected = true;
-        leafEl.clientWidth = 400;
-        const header = leafEl.createDiv({ cls: 'view-header' });
+        leafEl.clientWidth = width;
+        leafEl.style = { setProperty: (k, v) => { style[k] = v; }, removeProperty: k => { delete style[k]; } };
+        leafEl.createDiv({ cls: 'view-header' });
         const content = leafEl.createDiv({ cls: 'view-content' });
-        const preview = content.createDiv({ cls: 'markdown-preview-sizer' });
-        const source = content.createDiv({ cls: 'cm-sizer' });
-        leafEl.previewSizer = preview;
-        leafEl.sourceSizer = source;
-        leafEl.contentSizer = mode === 'preview' ? preview : source;
-        const leaf = { view: {
-            containerEl: leafEl, contentEl: content,
-            file: { path: 'Long.md' }, getViewType: () => 'markdown', getMode: () => mode
-        } };
-        plugin.processLeaf(leaf);
-        const panel = leafEl.children.find(child => child.cls === 'infobox-panel');
-        assert(panel, `${mode}: narrow panel belongs to the leaf`);
-        assert.equal(panel.nextSibling, content, `${mode}: narrow panel sits directly above the note`);
-        assert.equal(leafEl.children.indexOf(header), 0, 'view header stays first');
-        assert(!inSizer(preview) && !inSizer(source), `${mode}: panel is never inside editor or reading DOM`);
-        assert(leafEl.classList.contains('infobox-stacked'));
-        assert(!leafEl.classList.contains('infobox-docked'));
+        const previewScroller = content.createDiv({ cls: 'markdown-reading-view' }).createDiv({ cls: 'markdown-preview-view' });
+        const previewSizer = previewScroller.createDiv({ cls: 'markdown-preview-sizer' });
+        const editorScroller = content.createDiv({ cls: 'markdown-source-view' }).createDiv({ cls: 'cm-editor' }).createDiv({ cls: 'cm-scroller' });
+        const editorSizer = editorScroller.createDiv({ cls: 'cm-sizer' });
+        const view = { containerEl: leafEl, contentEl: content, file: { path: 'Long.md' },
+            getViewType: () => 'markdown', getMode: () => view.mode, mode };
+        return { leaf: { view }, leafEl, content, previewScroller, previewSizer, editorScroller, editorSizer };
+    };
+    const panelIn = el => el.children.find(child => child.cls === 'infobox-panel');
+
+    for (const mode of ['preview', 'source']) {
+        const l = leafFor(400, mode);
+        plugin.processLeaf(l.leaf);
+        const scroller = mode === 'preview' ? l.previewScroller : l.editorScroller;
+        const other = mode === 'preview' ? l.editorScroller : l.previewScroller;
+        const panel = panelIn(scroller);
+        assert(panel, `${mode}: narrow card is in the note's scroll area`);
+        assert.equal(scroller.children[0], panel, `${mode}: card is the first thing in the scroll area`);
+        assert(!panelIn(l.previewSizer) && !panelIn(l.editorSizer), `${mode}: card is never inside note text or sections`);
+        assert(!panelIn(other) && !panelIn(l.leafEl), `${mode}: only one card`);
+        assert(l.leafEl.classList.contains('infobox-stacked'));
+        assert(!l.leafEl.classList.contains('infobox-docked'));
         assert(panel.classList.contains('infobox-panel-stacked'));
 
         const observer = observers.at(-1);
-        assert.equal(observer.target, leafEl);
-        assert(!observer.options.subtree, 'observer must not watch editor keystrokes (subtree)');
+        const leafWatch = observer.targets.find(t => t.target === l.leafEl);
+        const scrollerWatch = observer.targets.find(t => t.target === scroller);
+        assert(leafWatch && !leafWatch.options.subtree, 'leaf watched without subtree');
+        assert(scrollerWatch && scrollerWatch.options.childList && !scrollerWatch.options.subtree,
+            'scroll area watched for its own children only, never editor keystrokes');
 
-        // Something removes the card: it is put back in the same place.
-        leafEl.children = leafEl.children.filter(child => child !== panel);
+        // Something removes the card: it goes back to the top of the scroll area.
+        scroller.children = scroller.children.filter(child => child !== panel);
         panel.parent = null;
         observer.callback([]);
         frames.shift()();
-        assert.equal(panel.nextSibling, content, `${mode}: card is restored above the note`);
+        assert.equal(scroller.children[0], panel, `${mode}: card is restored at the top`);
 
-        // Widening the pane docks the same card in the reserved gutter.
-        leafEl.clientWidth = 1000;
+        // Switching mode moves the same card to the other mode's scroll area.
+        l.leaf.view.mode = mode === 'preview' ? 'source' : 'preview';
         observer.callback([]);
         frames.shift()();
-        assert(leafEl.children.includes(panel));
-        assert(leafEl.classList.contains('infobox-docked'));
-        assert(!leafEl.classList.contains('infobox-stacked'));
+        assert.equal(other.children[0], panel, `${mode}: card follows a mode switch`);
+        assert(!panelIn(scroller));
+
+        // Widening the pane docks the card in the leaf and reserves a gutter.
+        l.leafEl.clientWidth = 1200;
+        observer.callback([]);
+        frames.shift()();
+        assert.equal(panel.parent, l.leafEl);
+        assert(l.leafEl.classList.contains('infobox-docked'));
+        assert(!l.leafEl.classList.contains('infobox-stacked'));
         assert(!panel.classList.contains('infobox-panel-stacked'));
-        assert(!inSizer(preview) && !inSizer(source));
+        assert.equal(style['--infobox-gutter'], '312px', 'without layout measurements the full card width is reserved');
 
-        // Narrowing again stacks it, with no duplicate card.
-        leafEl.clientWidth = 500;
+        // Narrowing again stacks it, clears the gutter, and keeps a single card.
+        l.leafEl.clientWidth = 500;
         observer.callback([]);
         frames.shift()();
-        assert.equal(panel.nextSibling, content);
-        assert.equal(leafEl.children.filter(child => child.cls === 'infobox-panel').length, 1);
+        assert.equal(other.children[0], panel);
+        assert.equal(style['--infobox-gutter'], undefined, 'stacked cards reserve no gutter');
+        assert.equal([l.leafEl, l.previewScroller, l.editorScroller].reduce((n, el) => n + el.children.filter(c => c.cls === 'infobox-panel').length, 0), 1);
 
-        plugin.processLeaf(leaf);
+        plugin.processLeaf(l.leaf);
         assert(observer.disconnected, 'refreshing must disconnect the previous observer');
+    }
+    {
+        // Phones always stack, whatever the reported width.
+        document.body.classList.add('is-phone');
+        const l = leafFor(1200, 'source');
+        l.leafEl.ownerDocument = document;
+        plugin.processLeaf(l.leaf);
+        assert.equal(l.editorScroller.children[0]?.cls, 'infobox-panel', 'phones stack the card in the scroll area');
+        document.body.classList.remove('is-phone');
+    }
+    {
+        // Tablet portrait widths stack; landscape widths dock (#21).
+        for (const [width, stacked] of [[768, true], [834, true], [1024, false], [1366, false]]) {
+            const l = leafFor(width, 'preview');
+            plugin.processLeaf(l.leaf);
+            assert.equal(l.leafEl.classList.contains('infobox-stacked'), stacked, `width ${width}`);
+        }
     }
     delete global.MutationObserver;
     delete global.requestAnimationFrame;
     delete global.cancelAnimationFrame;
-    delete TestElement.prototype.parentElement;
-    delete TestElement.prototype.nextSibling;
-    delete TestElement.prototype.insertBefore;
+    delete proto.parentElement;
+    delete proto.firstChild;
+    delete proto.insertBefore;
+    proto.querySelector = originalQuery;
 }
 const css = require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8');
-assert(css.includes('.infobox-docked > .view-content'), 'docked card must reserve a gutter so it never covers text');
+assert(css.includes('margin-right: var(--infobox-gutter'), 'docked card reserves the measured gutter so it never covers text');
 assert(!css.includes('infobox-panel-inline'), 'in-editor inline placement is gone');
 assert(!require('fs').readFileSync(require('path').join(__dirname, '../styles.css'), 'utf8').includes('padding-right: 300px'));
 

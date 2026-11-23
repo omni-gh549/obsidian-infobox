@@ -16,6 +16,20 @@ const COLOR_FIELDS = {
     border: ['Borders', '--infobox-border-color']
 };
 const isColor = value => typeof value === 'string' && /^#(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i.test(value);
+const CARD_WIDTH = 280;
+const CARD_GAP = 16;
+// Narrower panes (and phones) show the card above the note instead of beside it.
+const STACK_BELOW = 840;
+
+// The horizontal extent of a sizer's text, excluding its own padding.
+function textBounds(sizer) {
+    const rect = sizer.getBoundingClientRect();
+    const style = sizer.ownerDocument?.defaultView?.getComputedStyle?.(sizer);
+    const left = rect.left + (parseFloat(style?.paddingLeft) || 0);
+    const right = rect.right - (parseFloat(style?.paddingRight) || 0);
+    return { left, right };
+}
+
 const isPlainObject = value => value != null && typeof value === 'object' && !Array.isArray(value);
 // Obsidian's Properties panel offers to "fix" the nested infobox object by
 // converting it to text, which stores this literal string (#17).
@@ -1500,11 +1514,15 @@ class InfoboxPlugin extends Plugin {
             this.disconnectPanelObserver(ct);
             ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
             ct.classList.remove('has-infobox', 'infobox-docked', 'infobox-stacked');
+            ct.style?.removeProperty?.('--infobox-gutter');
         }
         if (this._pending != null) cancelAnimationFrame(this._pending);
         document.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         document.querySelectorAll('.has-infobox').forEach(e => e.classList.remove('has-infobox'));
-        document.querySelectorAll('.infobox-docked').forEach(e => e.classList.remove('infobox-docked'));
+        document.querySelectorAll('.infobox-docked').forEach(e => {
+            e.classList.remove('infobox-docked');
+            e.style.removeProperty('--infobox-gutter');
+        });
         document.querySelectorAll('.infobox-stacked').forEach(e => e.classList.remove('infobox-stacked'));
         document.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
     }
@@ -1562,13 +1580,70 @@ class InfoboxPlugin extends Plugin {
         for (const type of ['selectionchange', 'focusin', 'mouseup', 'pointerup']) {
             this.registerDomEvent(doc, type, clamp, { capture: true });
         }
-        // Shift+click on the card would extend the editor's selection to it.
+        // Text selection that starts on the card is driven here rather than by
+        // the browser: once a drag reaches the note, the browser hands focus to
+        // the editor and keeps the selection inside it, starting a note
+        // selection the user never meant to make. Here it stays in the card.
+        let drag = null;
+        const caretAt = (x, y, panel) => {
+            const range = doc.caretRangeFromPoint?.(x, y);
+            const position = range ? { node: range.startContainer, offset: range.startOffset }
+                : doc.caretPositionFromPoint?.(x, y) && (p => ({ node: p.offsetNode, offset: p.offset }))(doc.caretPositionFromPoint(x, y));
+            if (position?.node && panel.contains(position.node)) return position;
+            // Outside the card: clamp to its start or end.
+            const box = panel.getBoundingClientRect();
+            const all = doc.createRange();
+            all.selectNodeContents(panel);
+            const before = y < box.top || (y <= box.bottom && x < box.left);
+            return before ? { node: all.startContainer, offset: all.startOffset } : { node: all.endContainer, offset: all.endOffset };
+        };
         this.registerDomEvent(doc, 'mousedown', event => {
+            drag = null;
             const panel = panelOf(event.target);
-            if (!panel || !event.shiftKey) return;
+            if (!panel) return;
             const sel = doc.getSelection?.();
-            if (sel?.rangeCount && panelOf(sel.anchorNode) !== panel) event.preventDefault();
+            // Shift+click on the card would extend the editor's selection to it.
+            if (event.shiftKey) {
+                if (sel?.rangeCount && panelOf(sel.anchorNode) !== panel) event.preventDefault();
+                return;
+            }
+            if (event.button !== 0 || !sel || event.target.closest?.('a, button, input, textarea, select, img')) return;
+            // On narrow panes the card sits in the editor's scroll area; the
+            // editor must not treat this press as the start of a note selection.
+            event.preventDefault();
+            event.stopPropagation();
+            const active = doc.activeElement;
+            if (active && active !== doc.body && !panel.contains(active)) active.blur?.();
+            const start = caretAt(event.clientX, event.clientY, panel);
+            if (event.detail >= 3) {
+                // Triple-click: the row or heading that was clicked.
+                const block = event.target.closest?.('.infobox-row, .infobox-section, .infobox-title, .infobox-subtitle, .infobox-supertitle, .infobox-caption, li') || panel;
+                const range = doc.createRange();
+                range.selectNodeContents(panel.contains(block) ? block : panel);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return;
+            }
+            sel.collapse(start.node, start.offset);
+            if (event.detail === 2 && typeof sel.modify === 'function') {
+                // Double-click: the word that was clicked.
+                sel.modify('move', 'backward', 'word');
+                sel.modify('extend', 'forward', 'word');
+                clamp();
+                return;
+            }
+            drag = { panel, start };
         }, { capture: true });
+        this.registerDomEvent(doc, 'mousemove', event => {
+            if (!drag) return;
+            if (!(event.buttons & 1)) { drag = null; return; }
+            const end = caretAt(event.clientX, event.clientY, drag.panel);
+            doc.getSelection?.()?.setBaseAndExtent(drag.start.node, drag.start.offset, end.node, end.offset);
+            event.preventDefault();
+        }, { capture: true });
+        for (const type of ['mouseup', 'pointercancel', 'dragend']) {
+            this.registerDomEvent(doc, type, () => { drag = null; }, { capture: true });
+        }
         for (const type of ['keydown', 'beforeinput', 'cut', 'paste', 'drop']) {
             this.registerDomEvent(doc, type, block, { capture: true });
         }
@@ -1829,6 +1904,7 @@ class InfoboxPlugin extends Plugin {
         ct.querySelectorAll('.infobox-panel').forEach(e => e.remove());
         ct.classList.remove('has-infobox');
         ct.classList.remove('infobox-docked', 'infobox-stacked');
+        ct.style?.removeProperty?.('--infobox-gutter');
         ct.querySelectorAll('.infobox-readable-host').forEach(e => e.classList.remove('infobox-readable-host'));
 
         const file = view.file;
@@ -2160,45 +2236,98 @@ class InfoboxPlugin extends Plugin {
         this.keepPanelAttached(view, panel);
     }
 
-    // The card always lives directly in the leaf container, never inside the
-    // editor (CodeMirror) or the virtualized reading view: wide panes dock it in a
-    // reserved right-hand gutter, narrow panes stack it above the note (#12, #17).
+    // The note's scroll container for the active mode: the reading view's
+    // preview, or the editor's scroller. Never the text itself (#17).
+    getScroller(view) {
+        const content = view.contentEl;
+        if (!content?.querySelector) return null;
+        const mode = view.getMode?.();
+        const preview = () => content.querySelector('.markdown-reading-view > .markdown-preview-view');
+        const editor = () => content.querySelector('.markdown-source-view > .cm-editor > .cm-scroller');
+        return (mode === 'preview' ? preview() : mode === 'source' ? editor() : editor() || preview()) || null;
+    }
+
+    // Narrow panes and phones: the card is the first thing in the note's scroll
+    // area, so it scrolls away with the note (#21). It sits outside the text and
+    // outside the reading view's virtualized sections, and the selection guard
+    // keeps editor selections from reaching it (#17).
+    // Wider panes: the card is docked at the right, and the note gives up only
+    // as much width as needed to keep its text clear of the card (#21).
     keepPanelAttached(view, panel) {
         const ct = view.containerEl;
         const file = view.file;
+        const win = ct.ownerDocument?.defaultView || globalThis;
+        let watched = null;
+        let observer = null;
         const position = () => {
             if (view.file !== file) { this.scheduleRefresh(); return; }
             const width = ct.clientWidth || 1000;
-            const content = view.contentEl;
-            const stacked = width < 700 && content?.parentElement === ct;
+            const phone = Boolean(ct.ownerDocument?.body?.classList?.contains('is-phone'));
+            const scroller = (phone || width < STACK_BELOW) ? this.getScroller(view) : null;
+            const stacked = Boolean(scroller);
             panel.classList.toggle('infobox-panel-stacked', stacked);
             ct.classList.toggle('infobox-stacked', stacked);
             ct.classList.toggle('infobox-docked', !stacked);
             if (stacked) {
-                if (panel.parentElement !== ct || panel.nextSibling !== content) ct.insertBefore(panel, content);
-            } else if (panel.parentElement !== ct) {
-                ct.appendChild(panel);
+                ct.style?.removeProperty?.('--infobox-gutter');
+                if (panel.parentElement !== scroller || scroller.firstChild !== panel) {
+                    scroller.insertBefore(panel, scroller.firstChild);
+                }
+                if (observer && watched !== scroller) {
+                    observer.observe(scroller, { childList: true });
+                    watched = scroller;
+                }
+            } else {
+                if (panel.parentElement !== ct) ct.appendChild(panel);
+                this.fitGutter(view, panel);
             }
         };
-        position();
-        const win = ct.ownerDocument?.defaultView || globalThis;
-        if (typeof win.MutationObserver !== 'function') return;
+        if (typeof win.MutationObserver !== 'function') { position(); return; }
         let pending = null;
         const update = () => {
             if (!ct.isConnected) return this.disconnectPanelObserver(ct);
             if (pending !== null) return;
             pending = win.requestAnimationFrame(() => { pending = null; position(); });
         };
-        // Only the leaf's own children: editor keystrokes and reading-view
-        // rendering never reach this observer.
-        const observer = new win.MutationObserver(update);
+        // The leaf's own children, plus the scroll container's direct children
+        // while the card is stacked in it: never the editor's text or the
+        // reading view's sections.
+        observer = new win.MutationObserver(update);
         observer.observe(ct, { childList: true, attributes: true, attributeFilter: ['data-mode'] });
+        position();
         const resize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(update) : null;
         resize?.observe(ct);
         this._panelObservers.set(ct, { disconnect() {
             observer.disconnect(); resize?.disconnect();
             if (pending !== null) win.cancelAnimationFrame(pending);
         } });
+    }
+
+    // Reserve only the width the docked card needs. With readable line length
+    // the text is centred, so reserving some width moves it left by half that
+    // much; without it the text fills the pane and the card's full width is
+    // needed. Measured, so themes and font sizes are taken into account.
+    fitGutter(view, panel) {
+        const ct = view.containerEl;
+        const cardSpace = (panel.offsetWidth || CARD_WIDTH) + 2 * CARD_GAP;
+        const setGutter = px => ct.style?.setProperty?.('--infobox-gutter', `${Math.max(0, Math.ceil(px))}px`);
+        const scroller = this.getScroller(view);
+        const sizer = scroller?.querySelector?.(':scope > .markdown-preview-sizer, :scope > .cm-sizer');
+        if (!sizer?.getBoundingClientRect || !panel.getBoundingClientRect) { setGutter(cardSpace); return; }
+        // Reserving more width never moves the text right, so search for the
+        // smallest gutter that keeps the text clear of the card.
+        const overlaps = gutter => {
+            setGutter(gutter);
+            return textBounds(sizer).right > panel.getBoundingClientRect().left - CARD_GAP + 0.5;
+        };
+        if (!overlaps(0)) return;
+        let clear = cardSpace;
+        let blocked = 0;
+        while (clear - blocked > 2) {
+            const middle = (clear + blocked) / 2;
+            if (overlaps(middle)) blocked = middle; else clear = middle;
+        }
+        setGutter(clear);
     }
 
     getPropertyImages(ib, fm) {
