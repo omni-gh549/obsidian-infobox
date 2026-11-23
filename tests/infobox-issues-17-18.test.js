@@ -49,7 +49,15 @@ class El {
     addEventListener(name, fn) { this.events[name] = fn; }
     empty() { this.children = []; }
     all() { return [this, ...this.children.flatMap(c => (c instanceof El ? c.all() : []))]; }
+    get firstChild() { return this.children[0] || null; }
     querySelectorAll(sel) {
+        if (sel.includes('>')) {
+            // "a > b > c" child chains, as used to find the scroll area.
+            const parts = sel.split('>').map(p => p.trim().replace(/^\./, ''));
+            let level = [this];
+            for (const cls of parts) level = level.flatMap(el => el.children.filter(c => c instanceof El && c.classList.contains(cls)));
+            return level;
+        }
         const cls = sel.replace(/^\./, '');
         return this.all().slice(1).filter(e => e.classList.contains(cls) || e.tag === sel);
     }
@@ -170,7 +178,8 @@ function leaf(v, width = 1000) {
     containerEl.clientWidth = width;
     containerEl.createDiv({ cls: 'view-header' });
     const contentEl = containerEl.createDiv({ cls: 'view-content' });
-    contentEl.createDiv({ cls: 'cm-sizer' });
+    const scroller = contentEl.createDiv({ cls: 'markdown-source-view' }).createDiv({ cls: 'cm-editor' }).createDiv({ cls: 'cm-scroller' });
+    scroller.createDiv({ cls: 'cm-sizer' }).createDiv({ cls: 'cm-content' });
     return { view: { containerEl, contentEl, file: v.file, getViewType: () => 'markdown', getMode: () => 'source' } };
 }
 
@@ -201,19 +210,21 @@ test('#17 a converted "[object Object]" infobox can be restored from the last ve
     assert.equal(v.body(), 'Body text\n');
 });
 
-test('#17 the card is mounted outside the editor at every width', () => {
+test('#17/#21 the card is never inside the note text; narrow cards scroll with the note', () => {
     const v = vault('---\ninfobox:\n  title: Hero\n---\nBody\n');
     const plugin = new Plugin();
     plugin.app = v.app;
-    for (const width of [1400, 900, 699, 400]) {
+    for (const width of [1400, 900, 839, 400]) {
         const { leaf: l, panels, panel } = rendered(plugin, v, width);
         assert.equal(panels.length, 1);
-        assert.equal(panel.parentElement, l.view.containerEl, `width ${width}: card is a child of the leaf`);
-        assert.equal(l.view.contentEl.querySelectorAll('.infobox-panel').length, 0, `width ${width}: nothing inside the editor`);
-        const stacked = width < 700;
+        assert.equal(l.view.contentEl.querySelectorAll('.cm-sizer')[0].querySelectorAll('.infobox-panel').length, 0,
+            `width ${width}: nothing inside the note text`);
+        const stacked = width < 840;
         assert.equal(l.view.containerEl.classList.contains('infobox-stacked'), stacked);
         assert.equal(l.view.containerEl.classList.contains('infobox-docked'), !stacked);
-        if (stacked) assert.equal(panel.nextSibling, l.view.contentEl, 'narrow card sits above the note');
+        if (stacked) assert(panel.parentElement.classList.contains('cm-scroller') && panel.parentElement.firstChild === panel,
+            'narrow card is the first row of the scroll area');
+        else assert.equal(panel.parentElement, l.view.containerEl, 'wide card is docked in the leaf');
     }
 });
 

@@ -60,21 +60,38 @@ live edit/reading mode compatibility */
 
 }
 
-/* Reserve room inside this leaf; no panel can be clipped beyond its edge. */
+/* Reserve room inside this leaf; no panel can be clipped beyond its edge.
+   The plugin measures how much is needed (often none with readable line
+   length); 312px is the fallback before the first measurement. */
 .infobox-docked > .view-content {
-    margin-right: 312px;
+    /* Obsidian sets width: 100%, so a margin alone would overflow, not shrink. */
+    width: calc(100% - var(--infobox-gutter, 312px));
+    margin-right: var(--infobox-gutter, 312px);
 }
 
-/* Narrow panes: a block between the view header and the note, outside the
-   editor, so it can never cover note text or receive editor input. */
-.infobox-stacked > .infobox-panel.infobox-panel-stacked {
+/* Narrow panes and phones: the first row of the note's scroll area, so it
+   scrolls away with the note. It is outside the note text and sections. */
+.infobox-panel.infobox-panel-stacked {
     position: relative;
     inset: auto;
-    flex: 0 1 auto;
-    align-self: center;
-    width: min(calc(100% - 24px), 360px);
-    max-height: 40%;
-    margin: 8px 12px;
+    flex: 0 0 100%;
+    width: 100%;
+    max-height: none;
+    margin: 0 0 16px;
+}
+
+.infobox-panel-stacked > .infobox {
+    max-width: 360px;
+}
+
+.infobox-panel-stacked > .infobox-edit-button {
+    margin-right: max(0px, calc((100% - 360px) / 2));
+}
+
+/* The editor's scroller lays out its children in a row; let the card take
+   its own row above the note. */
+.infobox-stacked .cm-scroller:has(> .infobox-panel-stacked) {
+    flex-wrap: wrap;
 }
 
 #infobox-edit-modal .modal-content {
@@ -752,4 +769,113 @@ button.infobox-image-tab.is-active {
     font-size: 0.85em;
     display: block;
     margin-bottom: 8px;
+}
+
+/* ── Editor on phones and tablets (#21) ─────────────────────── */
+#infobox-edit-modal .modal-content {
+    container-type: inline-size;
+    container-name: infobox-editor;
+}
+
+.infobox-edit-field-label-input,
+.infobox-edit-field-val-input,
+.infobox-edit-field-section-input,
+.infobox-edit-gallery-row input,
+.infobox-edit-tag-input-row input[type="text"] {
+    min-width: 0;
+}
+
+/* Desktop modals keep label and value side by side (about 514px wide). The
+   stacked rows apply to narrower editors and always in Obsidian's mobile app,
+   whose larger touch targets leave the value box too little room (#21). */
+@container infobox-editor (max-width: 480px) {
+    .infobox-edit-field-row {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+
+    .infobox-edit-field-label-input {
+        flex: 1 1 0;
+        width: auto;
+    }
+
+    .infobox-edit-field-val-input {
+        order: 10;
+        flex: 1 0 100%;
+        width: 100%;
+        min-height: 4.5em;
+    }
+
+    .infobox-edit-gallery-row {
+        flex-wrap: wrap;
+    }
+
+    .infobox-edit-gallery-row > .infobox-edit-label {
+        flex: 0 0 100%;
+        margin-bottom: 0;
+    }
+
+    .infobox-edit-gallery-row input {
+        flex: 1 1 160px;
+    }
+
+    .infobox-edit-tag-input-row {
+        flex-wrap: wrap;
+    }
+
+    .infobox-edit-color-label {
+        flex-wrap: wrap;
+    }
+
+    .infobox-edit-color-label input {
+        width: auto;
+        max-width: none;
+        flex: 1 1 140px;
+    }
+}
+
+.is-mobile #infobox-edit-modal {
+    .infobox-edit-field-row {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+
+    .infobox-edit-field-label-input {
+        flex: 1 1 0;
+        width: auto;
+    }
+
+    .infobox-edit-field-val-input {
+        order: 10;
+        flex: 1 0 100%;
+        width: 100%;
+        min-height: 4.5em;
+    }
+
+    .infobox-edit-gallery-row {
+        flex-wrap: wrap;
+    }
+
+    .infobox-edit-gallery-row > .infobox-edit-label {
+        flex: 0 0 100%;
+        margin-bottom: 0;
+    }
+
+    .infobox-edit-gallery-row input {
+        flex: 1 1 160px;
+    }
+
+    .infobox-edit-tag-input-row {
+        flex-wrap: wrap;
+    }
+
+    .infobox-edit-color-label {
+        flex-wrap: wrap;
+    }
+
+    .infobox-edit-color-label input {
+        width: auto;
+        max-width: none;
+        flex: 1 1 140px;
+    }
 }

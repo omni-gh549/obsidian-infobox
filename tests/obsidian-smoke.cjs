@@ -10,6 +10,16 @@ const path = require('node:path');
     const page = browser.contexts()[0].pages().find(p => p.url().startsWith('app://obsidian.md'));
     assert(page, 'Obsidian page not found');
     page.setDefaultTimeout(10000);
+    // Lets the test run in a background or off-screen window without stealing focus.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    // Start from the desktop UI, even if an interrupted run left mobile emulation on.
+    if (await page.evaluate(() => app.isMobile)) {
+        await page.evaluate(() => setTimeout(() => app.emulateMobile(false), 50));
+        await page.waitForTimeout(1500);
+        await page.waitForFunction(() => window.app?.workspace?.layoutReady && app.plugins.plugins['omni-infobox'], null, { timeout: 30000 });
+        await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    }
     assert.equal(await page.evaluate(() => app.vault.getName()), 'test-vault', 'Use an isolated test vault');
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -31,8 +41,10 @@ const path = require('node:path');
         const panel = panels[0];
         const rect = panel?.getBoundingClientRect();
         const leaf = view.containerEl.getBoundingClientRect();
+        const scroller = view.containerEl.querySelector(view.getMode() === 'preview' ? '.markdown-preview-view' : '.cm-scroller');
         return { count: panels.length, stacked: panel?.classList.contains('infobox-panel-stacked'),
-            insideEditor: Boolean(view.contentEl.querySelector('.infobox-panel')),
+            inText: Boolean(panel?.closest('.cm-sizer, .cm-content, .markdown-preview-sizer')),
+            leafWidth: leaf.width, scrollerTop: scroller?.getBoundingClientRect().top, bottom: rect?.bottom, inScroller: panel?.parentElement === scroller,
             connected: panel?.isConnected, x: rect?.x, right: rect?.right, y: rect?.y, width: rect?.width,
             leafLeft: leaf.left, leafRight: leaf.right, title: panel?.querySelector('.infobox-title')?.textContent };
     });
@@ -61,9 +73,10 @@ const path = require('node:path');
     await page.evaluate(async () => {
         app.workspace.leftSplit.collapse();
         app.workspace.rightSplit.collapse();
+        app.vault.setConfig('readableLineLength', true);
         const notes = {
             'Smoke Long.md': '---\ninfobox:\n  title: Lifecycle test\n  fields:\n    - section: Identity\n    - Status: Visible\n---\n' +
-                Array.from({ length: 180 }, (_, i) => `\n## Section ${i}\n\nParagraph ${i}. Long note content.\n\n`).join(''),
+                Array.from({ length: 180 }, (_, i) => `\n## Section ${i}\n\nParagraph ${i}. Long note content. This sentence keeps going so that the paragraph wraps across the full readable line width of the note.\n\n`).join(''),
             'Smoke Empty.md': '---\nkeep: original\n---\nBody must survive.\n',
             'Smoke Other.md': '---\ninfobox:\n  title: Other note\n---\nOther body.\n'
         };
@@ -73,15 +86,29 @@ const path = require('node:path');
         }
     });
     await settle();
-    for (const width of [1280, 900, 480]) {
+    for (const width of [1920, 1280, 1024, 900, 768, 480, 375]) {
         await page.setViewportSize({ width, height: 900 });
         for (const mode of ['preview', 'source']) {
             await open('Smoke Long.md', mode);
             let g = await geometry();
             check(g.count === 1 && g.connected, `one panel at ${width}/${mode}`);
             check(g.x >= g.leafLeft && g.right <= g.leafRight + 1, `panel fits at ${width}/${mode}: ${JSON.stringify(g)}`);
-            check(!g.insideEditor, `panel is never inside the editor or reading view at ${width}/${mode} (#17)`);
-            check(g.stacked === (width < 700), `stacked only in narrow panes at ${width}/${mode}`);
+            check(!g.inText, `panel is never inside the note text or reading sections at ${width}/${mode} (#17)`);
+            check(g.stacked === (g.leafWidth < 840), `stacked only in narrow panes at ${width}/${mode} (#21)`);
+            if (!g.stacked) {
+                const fit = await page.evaluate(() => {
+                    const v = app.workspace.activeLeaf.view;
+                    const scroller = v.containerEl.querySelector(v.getMode() === 'preview' ? '.markdown-preview-view' : '.cm-scroller');
+                    const sizer = scroller.querySelector(':scope > .markdown-preview-sizer, :scope > .cm-sizer');
+                    const st = getComputedStyle(sizer);
+                    const right = sizer.getBoundingClientRect().right - parseFloat(st.paddingRight);
+                    return { gutter: parseFloat(getComputedStyle(v.contentEl).marginRight), textRight: right,
+                        cardLeft: v.containerEl.querySelector('.infobox-panel').getBoundingClientRect().left };
+                });
+                check(fit.textRight <= fit.cardLeft - 16 + 1, `text column ends before the card at ${width}/${mode} (#21): ${JSON.stringify(fit)}`);
+                if (width >= 1920) check(fit.gutter === 0, `no width is reserved when the card fits beside the text at ${width}/${mode} (#21): ${fit.gutter}`);
+                if (width === 1280) check(fit.gutter < 312, `only the needed width is reserved at ${width}/${mode} (#21): ${fit.gutter}`);
+            }
             const covered = await coveredText();
             check(covered.length === 0, `panel covers no note text at ${width}/${mode} (#17): ${JSON.stringify(covered)}`);
             for (const fraction of [1, 0.5, 0, 1, 0]) {
@@ -94,8 +121,45 @@ const path = require('node:path');
                 g = await geometry();
                 check(g.count === 1 && g.connected, `panel survives scrolling ${width}/${mode}/${fraction}`);
                 if (fraction === 0) check(g.y >= 0 && g.y < 900, 'panel visible on return to top');
+                if (fraction === 0.5) {
+                    if (g.stacked) check(g.inScroller && g.bottom < g.scrollerTop, `narrow card scrolls away with the note at ${width}/${mode} (#21)`);
+                    else check(g.y > 0 && g.y < 200, `wide card stays pinned at ${width}/${mode}`);
+                }
+                if (fraction === 1 && mode === 'preview') {
+                    // Sections render lazily after a scroll, so wait up to 3s for the last one.
+                    const lastVisible = () => {
+                        const v = app.workspace.activeLeaf.view;
+                        const scroller = v.containerEl.querySelector('.markdown-preview-view');
+                        scroller.scrollTop = scroller.scrollHeight;
+                        const s = scroller.getBoundingClientRect();
+                        const h = [...scroller.querySelectorAll('h2')].find(e => e.textContent.trim() === 'Section 179');
+                        const r = h?.getBoundingClientRect();
+                        return Boolean(r && r.bottom > s.top && r.top < s.bottom);
+                    };
+                    const last = await page.waitForFunction(lastVisible, null, { timeout: 3000, polling: 100 }).then(() => true, () => false);
+                    const seen = last ? '' : await page.evaluate(() => {
+                        const v = app.workspace.activeLeaf.view;
+                        const scroller = v.containerEl.querySelector('.markdown-preview-view');
+                        const heads = [...scroller.querySelectorAll('h2')].map(e => e.textContent.trim());
+                        return JSON.stringify({ top: scroller.scrollTop, height: scroller.scrollHeight, client: scroller.clientHeight, heads: heads.slice(-3) });
+                    });
+                    check(last, `reading view renders the end of the note with the card in place at ${width} (#12/#21) ${seen}`);
+                }
             }
             if (mode === 'source') {
+                // Clicks land on the right line with the card above or beside the text.
+                const target = await page.evaluate(async () => {
+                    const e = app.workspace.activeLeaf.view.editor;
+                    const line = e.getValue().split('\n').findIndex(l => l.startsWith('Paragraph 120.'));
+                    e.scrollIntoView({ from: { line, ch: 0 }, to: { line, ch: 0 } }, true);
+                    await new Promise(r => setTimeout(r, 200));
+                    const c = e.cm.coordsAtPos(e.posToOffset({ line, ch: 3 }));
+                    return { line, x: c.left + 1, y: (c.top + c.bottom) / 2 };
+                });
+                await page.mouse.click(target.x, target.y);
+                await settle();
+                const clicked = await page.evaluate(() => app.workspace.activeLeaf.view.editor.getCursor().line);
+                check(clicked === target.line, `click lands on the clicked line at ${width} (#21): ${clicked} vs ${target.line}`);
                 await page.evaluate(() => { const e = app.workspace.activeLeaf.view.editor; e.setCursor({ line: e.lineCount() - 1, ch: 0 }); e.replaceSelection('\nEdited in source.'); });
                 await settle();
                 check((await geometry()).count === 1, 'source edit retains infobox');
@@ -107,6 +171,15 @@ const path = require('node:path');
         await page.screenshot({ path: path.join(output, `layout-${width}.png`) });
     }
     await page.setViewportSize({ width: 1280, height: 900 });
+    for (const mode of ['preview', 'source']) {
+        await page.evaluate(() => app.vault.setConfig('readableLineLength', false));
+        await open('Smoke Long.md', mode);
+        await page.waitForTimeout(300);
+        const wide = await page.evaluate(() => parseFloat(getComputedStyle(app.workspace.activeLeaf.view.contentEl).marginRight));
+        const covered = await coveredText();
+        check(covered.length === 0 && wide >= 200, `full-width text keeps clear of the card at 1280/${mode} (#21): ${wide} ${JSON.stringify(covered)}`);
+        await page.evaluate(() => app.vault.setConfig('readableLineLength', true));
+    }
     await open('Smoke Long.md');
     await page.evaluate(async () => {
         const original = app.workspace.activeLeaf;
@@ -229,7 +302,7 @@ const path = require('node:path');
 
     // #17: clicking around the card and pressing Enter in the note must only ever
     // insert that one newline. Reproduces the reported flow at desktop and narrow widths.
-    for (const width of [1280, 480]) {
+    for (const width of [1280, 480, 375]) {
         await page.setViewportSize({ width, height: 900 });
         await open('Smoke Long.md', 'preview');
         await open('Smoke Long.md', 'source');
@@ -269,30 +342,34 @@ const path = require('node:path');
         // line, and targets that caret's exact screen position.
         const caret = () => page.evaluate(() => {
             const e = app.workspace.activeLeaf.view.editor;
-            // End of the line, so each Enter adds a line without splitting the marker.
-            const line = e.getValue().split('\n').findIndex(l => l.startsWith('Paragraph 4.'));
+            // End of the line, so each Enter adds a line without splitting the
+            // marker. Near the top, so it is on screen together with a narrow
+            // card, which scrolls with the note.
+            const line = e.getValue().split('\n').findIndex(l => l.startsWith('Paragraph 0.'));
             if (line < 0) throw new Error('marker line missing');
             const ch = e.getLine(line).length;
             e.setCursor({ line, ch });
             e.focus();
+            app.workspace.activeLeaf.view.containerEl.querySelector('.cm-scroller').scrollTop = 0;
             const c = e.cm.coordsAtPos(e.posToOffset({ line, ch }));
             return { x: c.left - 1, y: (c.top + c.bottom) / 2 };
         });
+        // The card is measured after the caret is placed, since placing it can scroll the note.
         const gestures = {
             'shift+click on the card': async () => {
-                const at = await cardPoint();
                 await caret();
+                const at = await cardPoint();
                 await page.keyboard.down('Shift'); await page.mouse.click(at.x, at.y); await page.keyboard.up('Shift');
             },
             'drag from the card into the note': async () => {
-                const at = await cardPoint();
                 const c = await caret();
+                const at = await cardPoint();
                 await page.mouse.move(at.x, at.y); await page.mouse.down();
                 await page.mouse.move(c.x, c.y, { steps: 8 }); await page.mouse.up();
             },
             'click card, shift+click note': async () => {
-                const at = await cardPoint();
                 const c = await caret();
+                const at = await cardPoint();
                 await page.mouse.click(at.x, at.y);
                 await page.keyboard.down('Shift'); await page.mouse.click(c.x, c.y); await page.keyboard.up('Shift');
             }
@@ -412,6 +489,91 @@ const path = require('node:path');
     await page.evaluate(async () => { await app.plugins.enablePlugin('omni-infobox'); });
     await settle();
     check((await geometry()).count === 1, 'reload restores panel');
+    // #21 editor: value boxes get the full width on narrow editors; desktop keeps
+    // label and value side by side. A value typed on a phone is saved.
+    const editorLayout = () => page.evaluate(() => {
+        const modal = document.querySelector('#infobox-edit-modal');
+        const content = modal.querySelector('.modal-content');
+        const row = modal.querySelector('.infobox-edit-field-row.is-label');
+        const label = row.querySelector('.infobox-edit-field-label-input').getBoundingClientRect();
+        const value = row.querySelector('.infobox-edit-field-val-input').getBoundingClientRect();
+        return { content: content.clientWidth, label: label.width, value: value.width, sameRow: Math.abs(label.top - value.top) < 10,
+            overflow: content.scrollWidth > content.clientWidth + 1 };
+    });
+    await page.evaluate(async () => {
+        const text = '---\ninfobox:\n  title: Editor\n  fields:\n    - section: Identity\n    - Full name: Sir Example\n    - Known for: Things\n---\nEditor body.\n';
+        const file = app.vault.getAbstractFileByPath('Smoke Editor.md');
+        if (file) await app.vault.modify(file, text); else await app.vault.create('Smoke Editor.md', text);
+    });
+    for (const width of [1280, 600, 375]) {
+        await page.setViewportSize({ width, height: 900 });
+        await open('Smoke Editor.md');
+        await page.locator('.workspace-leaf.mod-active .infobox-edit-button').click();
+        await settle();
+        const e = await editorLayout();
+        check(!e.overflow, `editor never scrolls sideways at ${width} (#21)`);
+        // "Full width" = the whole field row, inside the row's own padding.
+        if (e.content <= 480) check(!e.sameRow && e.value >= e.content * 0.85, `value box spans the editor at ${width} (#21): ${JSON.stringify(e)}`);
+        else check(e.sameRow && e.value >= 150, `desktop editor keeps label and value side by side at ${width} (#21): ${JSON.stringify(e)}`);
+        if (width === 375) {
+            const value = page.locator('#infobox-edit-modal .infobox-edit-field-val-input').first();
+            await value.fill('Sir Example of Somewhere Far Away');
+            await page.getByRole('button', { name: 'Save infobox', exact: true }).click();
+            await page.waitForTimeout(600);
+            check((await read('Smoke Editor.md')).includes('Full name: Sir Example of Somewhere Far Away'), 'a value edited on a phone-width editor is saved (#21)');
+            await page.screenshot({ path: path.join(output, 'editor-375.png') });
+        } else {
+            await page.screenshot({ path: path.join(output, `editor-${width}.png`) });
+            await page.keyboard.press('Escape');
+        }
+        await settle();
+    }
+
+    // #21 in Obsidian's own mobile UI (phone and tablet), via its mobile emulation.
+    const reloadMobile = async on => {
+        await page.evaluate(on => setTimeout(() => app.emulateMobile(on), 50), on);
+        await page.waitForTimeout(1500);
+        await page.waitForFunction(() => window.app?.workspace?.layoutReady && app.plugins.plugins['omni-infobox'], null, { timeout: 30000 });
+        await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+        await page.waitForTimeout(500);
+    };
+    for (const [width, height] of [[390, 844], [820, 1180]]) {
+        await page.setViewportSize({ width, height });
+        await reloadMobile(true);
+        await page.setViewportSize({ width, height });
+        const device = await page.evaluate(() => ({ mobile: app.isMobile, phone: document.body.classList.contains('is-phone') }));
+        check(device.mobile, `mobile UI active at ${width}x${height}`);
+        for (const mode of ['preview', 'source']) {
+            await page.evaluate(() => document.querySelectorAll('.modal-container .modal-close-button').forEach(b => b.click()));
+            await open('Smoke Long.md', mode);
+            await page.waitForTimeout(300);
+            let g = await geometry();
+            check(g.count === 1 && g.stacked && !g.inText, `mobile card is stacked outside the text at ${width}/${mode} (#21): ${JSON.stringify(g)}`);
+            check((await coveredText()).length === 0, `mobile card covers no text at ${width}/${mode} (#21)`);
+            await page.evaluate(() => {
+                const v = app.workspace.activeLeaf.view;
+                const scroller = v.containerEl.querySelector(v.getMode() === 'preview' ? '.markdown-preview-view' : '.cm-scroller');
+                scroller.scrollTop = 2000;
+            });
+            await settle();
+            g = await geometry();
+            check(g.inScroller && g.bottom < g.scrollerTop, `mobile card scrolls away with the note at ${width}/${mode} (#21)`);
+            await page.screenshot({ path: path.join(output, `mobile-${width}-${mode}.png`) });
+        }
+        await open('Smoke Editor.md');
+        await page.evaluate(() => app.workspace.activeLeaf.view.containerEl.querySelector('.infobox-edit-button').click());
+        await settle();
+        const e = await editorLayout();
+        check(!e.overflow && !e.sameRow && e.value >= e.content * 0.85, `mobile editor gives values the full width at ${width} (#21): ${JSON.stringify(e)}`);
+        await page.evaluate(() => document.querySelector('#infobox-edit-modal .infobox-edit-fields-container')?.scrollIntoView({ block: 'center' }));
+        await settle();
+        await page.screenshot({ path: path.join(output, `mobile-editor-${width}.png`) });
+        await page.evaluate(() => document.querySelectorAll('.modal-container .modal-close-button').forEach(b => b.click()));
+    }
+    await reloadMobile(false);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    check(await page.evaluate(() => !app.isMobile), 'mobile emulation switched off again');
+
     check(errors.length === 0, `no renderer errors: ${errors.join('\n')}`);
     console.log(JSON.stringify({ checks, errors, output }, null, 2));
     await browser.close();

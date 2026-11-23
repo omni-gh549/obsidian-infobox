@@ -67,7 +67,7 @@ infobox:
     - Name: Example
 ```
 
-Wide panes reserve space beside the note for a pinned infobox, so it never covers note text. Panes narrower than 700 CSS pixels show the card above the note, outside the editor. Resizing panes or switching between Reading view, Live Preview, and Source mode updates placement automatically. You can select and copy text in the card, but a selection cannot run from the card into the note, so typing in the note never replaces text you did not select.
+On wide panes the infobox is pinned beside the note. Only as much width is set aside as the card needs to stay clear of your text: with readable line length on and a wide window, usually none. On phones, and on panes narrower than 840 CSS pixels such as tablets in portrait, the card sits at the top of the note and scrolls away with it. Resizing panes or switching between Reading view, Live Preview, and Source mode updates placement automatically. You can select and copy text in the card, but a selection cannot run from the card into the note, so typing in the note never replaces text you did not select.
 
 ### Visual editor
 
@@ -79,7 +79,7 @@ Every rendered infobox includes an **Edit** button at the bottom of the panel. C
 - Add section dividers and data fields with multiline text support
 - Drag-and-drop or use arrow buttons to reorder fields and sections
 
-Changes save back to the note's YAML frontmatter automatically.
+Changes save back to the note's YAML frontmatter automatically. On phones and tablets each field's value gets its own full-width line, so it stays easy to edit.
 
 ### YAML frontmatter
 
